@@ -124,6 +124,7 @@ class ShellSpec:
     cwd: str
     pty: bool
     logs_dir: Path
+    shell_binary: str
     buffer_bytes: int
     max_log_bytes: int
 
@@ -152,6 +153,7 @@ class Shell:
         self._tty_fd = tty_fd
         self._on_change = on_change
         self.pid = proc.pid
+        self._lineage: list[int] | None = None
         stat = procfs.read_stat(proc.pid)
         self.pgid = stat.pgid if stat else os.getpgid(proc.pid)
         self.start_ticks = stat.start_ticks if stat else 0
@@ -487,8 +489,39 @@ class Shell:
 
     # ----- signals -------------------------------------------------------------------
 
+    def lineage(self, snap: dict[int, procfs.ProcStat] | None = None) -> list[int]:
+        """Pids from the root process down to the shell itself.
+
+        Under the namespace tier the root is ``unshare`` and the shell is its only child;
+        under the others the two coincide. A shell inside a PID namespace cannot report
+        its host pid, so this walks ``/proc`` down through single-child wrappers until it
+        reaches a process named like the shell binary, and remembers the answer.
+        """
+        if self._lineage is not None:
+            return self._lineage
+        snap = snap if snap is not None else procfs.snapshot()
+        shell_comm = os.path.basename(self.spec.shell_binary)[:15]
+        chain = [self.pid]
+        while chain[-1] in snap and snap[chain[-1]].comm != shell_comm:
+            children = [p.pid for p in snap.values() if p.ppid == chain[-1]]
+            if len(children) != 1:
+                return chain
+            chain.append(children[0])
+        if chain[-1] in snap:
+            self._lineage = chain
+        return chain
+
+    @property
+    def shell_pid(self) -> int:
+        """The shell process itself (a host pid), as opposed to the root process."""
+        return self.lineage()[-1]
+
     def _signal_descendants(self, sig: int) -> int:
-        pids = procfs.descendants(self.pid, procfs.snapshot())
+        snap = procfs.snapshot()
+        # The shell and whatever sits between it and the root process (unshare, setpriv)
+        # are not the command; a signal meant for the command must leave them alone.
+        lineage = set(self.lineage(snap))
+        pids = [pid for pid in procfs.descendants(self.pid, snap) if pid not in lineage]
         killed = 0
         for pid in pids:
             try:
@@ -546,6 +579,7 @@ class Shell:
                 "state": self.state.value,
                 "dead_reason": self.dead_reason,
                 "pid": self.pid,
+                "shell_pid": self.shell_pid,
                 "pgid": self.pgid,
                 "start_ticks": self.start_ticks,
                 "pty": self.spec.pty,

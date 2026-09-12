@@ -30,10 +30,13 @@ async def ready(
     a keyring outage until the keys rotate.
     """
     keyring_error: str | None = None
+    keyring_status = "cached"
     try:
-        await jwks.ensure_fresh()
+        if await jwks.ensure_fresh():
+            keyring_status = "fresh"
     except KeyringUnavailableError as exc:
         keyring_error = exc.detail
+        keyring_status = "unreachable"
     ready = keyring_error is None or jwks.has_keys
     response.status_code = 200 if ready else 503
     return {
@@ -42,7 +45,9 @@ async def ready(
         "min_sandbox_tier": settings.min_sandbox_tier,
         "allow_network": settings.allow_network,
         "keyring": {
-            "reachable": keyring_error is None,
+            # "cached": keys still within their TTL, keyring not contacted this call;
+            # "fresh": fetched just now; "unreachable": a needed fetch failed.
+            "status": keyring_status,
             "keys_cached": jwks.has_keys,
             "error": keyring_error,
         },

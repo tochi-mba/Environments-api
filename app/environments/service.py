@@ -489,6 +489,7 @@ class EnvironmentService:
                 cwd=relative_to_workspace(workspace, cwd_path),
                 pty=pty,
                 logs_dir=self._store.logs(record),
+                shell_binary=self._settings.shell_binary,
                 buffer_bytes=quotas.max_output_buffer_bytes,
                 max_log_bytes=quotas.max_command_log_bytes,
             )

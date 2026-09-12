@@ -62,11 +62,13 @@ class JWKSCache:
         self._fetched_at = self._clock()
         log.info("jwks_refreshed", keys=sorted(self._keys))
 
-    async def ensure_fresh(self) -> None:
-        """Refresh only if the cached set has expired; used by the readiness check."""
+    async def ensure_fresh(self) -> bool:
+        """Refresh only if the cached set has expired; returns whether keyring was contacted."""
         async with self._lock:
             if self._stale():
                 await self.refresh()
+                return True
+            return False
 
     def _stale(self) -> bool:
         return self._fetched_at is None or self._clock() - self._fetched_at >= self._ttl

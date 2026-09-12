@@ -13,9 +13,11 @@ from app import procfs
 from app.constants import CommandState, ShellState
 from app.errors import SandboxError, ShellBusyError, ShellNotRunningError
 from app.keyring.client import ResolvedCredential
-from app.sandbox import ResourceLimits, SpawnRequest
+from app.sandbox import ResourceLimits, Sandbox, SpawnRequest
 from app.sandbox.directory import DirectorySandbox
+from app.sandbox.namespace import NamespaceSandbox, running_as_root
 from app.shells.shell import Shell, ShellSpec
+from tests.conftest import requires_unshare
 
 BASH = "/bin/bash"
 
@@ -25,7 +27,14 @@ def state_of(shell: Shell) -> ShellState:
     return shell.state
 
 
-def make_shell(tmp_path: Path, *, pty: bool = False, buffer_bytes: int = 1 << 20) -> Shell:
+def make_shell(
+    tmp_path: Path,
+    *,
+    pty: bool = False,
+    buffer_bytes: int = 1 << 20,
+    sandbox: Sandbox | None = None,
+    shell_binary: str = BASH,
+) -> Shell:
     ws = tmp_path / "workspace"
     ws.mkdir(exist_ok=True)
     logs = tmp_path / "logs"
@@ -36,6 +45,7 @@ def make_shell(tmp_path: Path, *, pty: bool = False, buffer_bytes: int = 1 << 20
         cwd=".",
         pty=pty,
         logs_dir=logs,
+        shell_binary=shell_binary,
         buffer_bytes=buffer_bytes,
         max_log_bytes=64,
     )
@@ -50,7 +60,7 @@ def make_shell(tmp_path: Path, *, pty: bool = False, buffer_bytes: int = 1 << 20
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    return Shell.spawn(spec, DirectorySandbox(), request)
+    return Shell.spawn(spec, sandbox or DirectorySandbox(), request)
 
 
 @pytest.fixture
@@ -70,6 +80,7 @@ def run(shell: Shell, command: str, timeout: float = 10, **kw: object) -> tuple[
 def test_lifecycle(shell: Shell) -> None:
     assert shell.state is ShellState.RUNNING
     assert shell.pid > 0 and shell.pgid == shell.pid and shell.start_ticks > 0
+    assert shell.shell_pid == shell.pid
     assert procfs.is_same_process(shell.pid, shell.start_ticks)
     code, out = run(shell, "echo hello")
     assert (code, out) == (0, b"hello\n")
@@ -272,15 +283,19 @@ def test_stdin_closed_after_exit(shell: Shell) -> None:
 
 
 def test_exec_when_stdin_broken(shell: Shell) -> None:
-    # Close our end of stdin out from under the shell to force the write error path.
-    os.close(shell._stdin_fd)
+    # Point the shell's stdin handle at something unwritable to force the write error path.
+    real = shell._stdin_fd
     shell._stdin_fd = os.open(os.devnull, os.O_RDONLY)
-    with pytest.raises(SandboxError):
-        shell.exec("true")
-    assert shell.commands[-1].state is CommandState.SHELL_DIED
-    shell._stdin_fd = -1
-    with pytest.raises(SandboxError, match="closed"):
-        shell._write_stdin(b"true\n")
+    try:
+        with pytest.raises(SandboxError):
+            shell.exec("true")
+        assert shell.commands[-1].state is CommandState.SHELL_DIED
+        shell._stdin_fd = -1
+        with pytest.raises(SandboxError, match="closed"):
+            shell._write_stdin(b"true\n")
+    finally:
+        shell._stdin_fd = real
+    assert run(shell, "echo ok")[1] == b"ok\n"
 
 
 def test_pty_mode(tmp_path: Path) -> None:
@@ -304,7 +319,7 @@ def test_pty_mode(tmp_path: Path) -> None:
 def test_spawn_failure_cleans_up(tmp_path: Path) -> None:
     ws = tmp_path / "workspace"
     ws.mkdir()
-    spec = ShellSpec("sh_x", "env_x", ".", False, tmp_path, 1024, 1024)
+    spec = ShellSpec("sh_x", "env_x", ".", False, tmp_path, BASH, 1024, 1024)
     request = SpawnRequest(
         environment_id="env_x",
         argv=["/nonexistent/shell"],
@@ -332,7 +347,7 @@ def test_on_change_callback(tmp_path: Path) -> None:
     seen: list[str] = []
     ws = tmp_path / "workspace"
     ws.mkdir()
-    spec = ShellSpec("sh_cb", "env_cb", ".", False, tmp_path, 1024, 1024)
+    spec = ShellSpec("sh_cb", "env_cb", ".", False, tmp_path, BASH, 1024, 1024)
     request = SpawnRequest(
         environment_id="env_cb",
         argv=[BASH],
@@ -350,3 +365,66 @@ def test_on_change_callback(tmp_path: Path) -> None:
     run(shell, "true")
     shell.close(2)
     assert seen[0] == "running" and seen[-1] == "closed"
+
+
+@requires_unshare
+def test_namespace_tier_shell_signals_skip_the_lineage(tmp_path: Path) -> None:
+    sandbox = NamespaceSandbox(rootless=not running_as_root())
+    (tmp_path / "workspace").mkdir()
+    sandbox.prepare("env_test0001", tmp_path, tmp_path / "workspace")
+    shell = make_shell(tmp_path, sandbox=sandbox)
+    try:
+        code, out = run(shell, "echo $$")
+        assert code == 0
+        assert out.strip() == b"1"  # pid 1 inside its namespace, a host pid outside
+        assert shell.shell_pid != shell.pid
+        assert shell.lineage() == [shell.pid, shell.shell_pid]
+        assert shell.to_dict()["shell_pid"] == shell.shell_pid
+        assert procfs.read_cmdline(shell.shell_pid).startswith(BASH)
+        record = shell.exec("sleep 30")
+        deadline = time.monotonic() + 10
+        while (
+            not any(
+                procfs.read_cmdline(p).startswith("sleep")
+                for p in procfs.descendants(shell.pid, procfs.snapshot())
+            )
+            and time.monotonic() < deadline
+        ):
+            pass
+        assert shell.signal(signal.SIGTERM) == 1
+        assert shell.wait_command(record, 10)
+        assert record.exit_code == 143 and state_of(shell) is ShellState.RUNNING
+        assert run(shell, "echo still-here")[1] == b"still-here\n"
+    finally:
+        shell.close(2)
+        sandbox.teardown("env_test0001")
+    assert state_of(shell) is ShellState.CLOSED
+
+
+def test_stray_output_between_commands(shell: Shell) -> None:
+    code, out = run(shell, "(sleep 0.1; echo late) &")
+    assert code == 0 and out == b""
+    end = shell.cursor
+    deadline = time.monotonic() + 10
+    while shell.cursor == end and time.monotonic() < deadline:
+        pass
+    assert shell.read_output(end, 100).data == b"late\n"
+    assert shell.current is None
+
+
+def test_lineage_stays_unresolved_for_unknown_shell_name(tmp_path: Path) -> None:
+    shell = make_shell(tmp_path, shell_binary="/bin/nomatch")
+    try:
+        record = shell.exec("sleep 30 & sleep 30 & echo up; wait")
+        assert shell.wait_output(record.output_start, 10)
+        deadline = time.monotonic() + 10
+        while (
+            len(procfs.descendants(shell.pid, procfs.snapshot())) < 2
+            and time.monotonic() < deadline
+        ):
+            pass
+        assert shell.lineage() == [shell.pid]  # two children: not a wrapper chain
+        assert shell._lineage is None
+    finally:
+        shell.close(1)
+    assert shell.lineage() == [shell.pid] and shell._lineage is None  # gone: never cached

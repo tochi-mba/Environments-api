@@ -49,10 +49,11 @@ async def test_health(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
     response = await client.get("/health/ready")
     assert response.status_code == 200
     body = response.json()
-    assert body["sandbox_tier"] == "directory" and body["keyring"]["reachable"]
+    assert body["sandbox_tier"] == "directory" and body["keyring"]["status"] == "fresh"
     keyring.down = True
     response = await client.get("/health/ready")
-    assert response.status_code == 200 and response.json()["keyring"]["keys_cached"]
+    assert response.status_code == 200
+    assert response.json()["keyring"] == {"status": "cached", "keys_cached": True, "error": None}
 
 
 async def test_ready_without_keys_is_503(settings: Settings, keyring: FakeKeyring) -> None:
@@ -63,6 +64,7 @@ async def test_ready_without_keys_is_503(settings: Settings, keyring: FakeKeyrin
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             response = await client.get("/health/ready")
             assert response.status_code == 503
+            assert response.json()["keyring"]["status"] == "unreachable"
             assert response.json()["keyring"]["error"]
             response = await client.get("/v1/environments", headers=auth_headers(keyring, "a"))
             assert (
