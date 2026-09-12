@@ -1,0 +1,23 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # The suite exercises every sandbox tier for real, which needs root (user tier) and
+    # unshare (namespace tier). A privileged container gives both; plain runners give
+    # neither and the coverage gate would fail on the skipped tiers.
+    container:
+      image: python:3.11-slim
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system tools
+        run: apt-get update && apt-get install -y --no-install-recommends make util-linux passwd bash procps
+      - name: Install uv
+        run: pip install uv
+      - run: make install
+      - run: make check
