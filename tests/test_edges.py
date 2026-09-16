@@ -41,7 +41,8 @@ def test_audit_tail_edge_cases(tmp_path: Path) -> None:
     audit = AuditLog(tmp_path / "audit.jsonl")
     assert audit.tail(10) == []
     audit.record("a", "acct")
-    (tmp_path / "audit.jsonl").open("a").write("not json\n")
+    with (tmp_path / "audit.jsonl").open("a") as log:
+        log.write("not json\n")
     audit.record("b", "other")
     assert [e["action"] for e in audit.tail(10)] == ["a", "b"]
     assert [e["action"] for e in audit.tail(10, "acct")] == ["a"]
@@ -260,16 +261,20 @@ async def test_reaper_loop_runs_and_survives_errors(
         return ReapReport(shells_closed=1) if len(calls) == 2 else ReapReport()
 
     monkeypatch.setattr(EnvironmentService, "reap", fake_reap)
-    app = create_app(settings, http_client=keyring.client(), capabilities=NO_SANDBOX)
+    app = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with app.router.lifespan_context(app):
         await asyncio.wait_for(seen.wait(), 10)
     assert len(calls) >= 3
 
 
-async def test_app_owns_its_http_client(settings: Settings) -> None:
-    app = create_app(settings, capabilities=NO_SANDBOX)
+async def test_keyring_clients_start_without_a_fetch_and_close_with_the_app(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    app = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with app.router.lifespan_context(app):
-        assert isinstance(app.state.jwks._client, httpx.AsyncClient)
+        jwks, credentials = app.state.jwks, app.state.credentials
+        assert keyring.fetches == 0 and not jwks._client.is_closed
+    assert jwks._client.is_closed and credentials._client._http.is_closed
 
 
 async def test_schema_validation_over_http(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:

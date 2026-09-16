@@ -1,76 +1,144 @@
 """Resolve credentials from keyring for injection into commands.
 
-Keyring never hands back a stored secret as such: it returns what to attach. Both the
-service token and the user's token are required, and the account is taken from the user's
-token by keyring itself, so a compromised service cannot fetch a credential it was not given
-a token for. Nothing here erodes that.
+Keyring never hands back a stored secret as such. It answers ``resolve_credential`` with what
+to attach to an outgoing request::
 
-The response shape this client understands is documented in ``docs/keyring.md``; it is
-deliberately tolerant so that a small change on keyring's side does not break injection.
+    {"service": "github", "headers": {"Authorization": "Bearer ghp_..."},
+     "query_params": {}, "expires_at": null}
+
+and this module turns that into environment variables for one command. The call itself is
+``keyring_client``'s, shared by every service in the family: both the service token and the
+user's token are sent, and keyring takes the account from the user's token itself, so a
+compromised service cannot fetch a credential it was not handed a token for.
+
+A body in any other shape is refused rather than turned into an empty environment. This
+service once shipped a parser for a shape keyring has never produced, built against a stand-in
+that echoed whatever it was given, and every real credential silently resolved to nothing. The
+mapping is documented in ``docs/keyring.md``; this is the one place to change it.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import httpx
 import structlog
+from keyring_client import (
+    BAD_TOKEN,
+    CredentialNotFoundError,
+    CredentialUnavailableError,
+    KeyringRejectedError,
+    KeyringUnreachableError,
+)
 
-from app.constants import HEADER_USER_TOKEN
 from app.errors import KeyringUnavailableError, UnauthorizedError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from keyring_client import CredentialClient as SharedCredentialClient
 
 log = structlog.get_logger(__name__)
 
-_SECRET_KEYS = ("value", "access_token", "token", "api_key", "secret", "password")
+MIN_SECRET_CHARS = 4
+"""Shorter values are injected but not redacted: replacing every ``abc`` in captured output
+would mangle it without protecting anything worth the name."""
+
+TOKEN_SUFFIX = "TOKEN"
+UNREADABLE = "keyring returned a credential this service cannot read"
+UNREACHABLE = "keyring is unreachable"
+
+_AUTHORIZATION = "authorization"
+_SCHEME_AND_CREDENTIAL = re.compile(r"^[A-Za-z][A-Za-z0-9._~+/-]*\s+(\S+)$")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class ResolvedCredential:
     """A credential as it will be injected: environment variables plus what to redact."""
 
     service: str
     env: dict[str, str] = field(default_factory=dict)
 
+    def __repr__(self) -> str:
+        """Name the variables, never show them: every value is a credential."""
+        return f"ResolvedCredential(service={self.service!r}, env=<{','.join(sorted(self.env))}>)"
+
     @property
     def secrets(self) -> tuple[str, ...]:
-        """Every value that must never reach captured output."""
-        return tuple(sorted({v for v in self.env.values() if len(v) >= 4}, key=len, reverse=True))
+        """Every value that must never reach captured output, longest first."""
+        values = {value for value in self.env.values() if len(value) >= MIN_SECRET_CHARS}
+        return tuple(sorted(values, key=len, reverse=True))
 
 
-def _env_name(service: str, suffix: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in service).upper() + "_" + suffix
+def env_name(service: str, name: str) -> str:
+    """``<SERVICE>_<NAME>``, upper-cased, with every non-alphanumeric character as ``_``."""
+    return "".join(ch if ch.isalnum() else "_" for ch in f"{service}_{name}").upper()
 
 
-def parse_credential(service: str, body: dict[str, Any]) -> ResolvedCredential:
-    """Turn keyring's response into environment variables.
+def parse_credential(service: str, body: Mapping[str, Any]) -> ResolvedCredential:
+    """Turn keyring's resolved credential into environment variables.
 
-    An explicit ``env`` object wins. Otherwise the first present secret-like field becomes
-    ``<SERVICE>_TOKEN`` and a ``username`` becomes ``<SERVICE>_USERNAME``.
+    * Every header becomes ``<SERVICE>_<HEADER>``, holding the header's whole value.
+    * Every query parameter becomes ``<SERVICE>_<PARAMETER>``.
+    * ``<SERVICE>_TOKEN`` holds the bare credential, which is what most command-line tools
+      read: the part after the scheme of an ``Authorization`` header, or its whole value when
+      it has no scheme; failing that, the one value when keyring returned exactly one header
+      or query parameter. With several and no ``Authorization`` it is left unset, because a
+      guess would inject the wrong secret under a name a tool trusts.
+
+    Raises:
+        KeyringUnavailableError: ``headers`` is missing or is not a string-to-string object,
+            or ``query_params`` is present and is not one.
     """
-    explicit = body.get("env")
-    if isinstance(explicit, dict) and explicit:
-        return ResolvedCredential(service, {str(k): str(v) for k, v in explicit.items()})
-    env: dict[str, str] = {}
-    for key in _SECRET_KEYS:
-        value = body.get(key)
-        if isinstance(value, str) and value:
-            env[_env_name(service, "TOKEN")] = value
-            break
-    username = body.get("username")
-    if isinstance(username, str) and username:
-        env[_env_name(service, "USERNAME")] = username
+    headers = _string_map(body.get("headers"))
+    raw_params = body.get("query_params")
+    params = {} if raw_params is None else _string_map(raw_params)
+    return credential_env(service, headers, params)
+
+
+def credential_env(
+    service: str, headers: Mapping[str, str], query_params: Mapping[str, str]
+) -> ResolvedCredential:
+    """:func:`parse_credential`'s rules, for an answer whose shape is already known to be good.
+
+    :class:`CredentialClient` comes straight here, because keyring-client refuses a body in
+    any other shape before handing over its headers and query parameters.
+    """
+    env = {env_name(service, name): value for name, value in headers.items()}
+    env.update({env_name(service, name): value for name, value in query_params.items()})
+
+    token = _bare_token(headers, query_params)
+    if token is not None:
+        env.setdefault(env_name(service, TOKEN_SUFFIX), token)
     return ResolvedCredential(service, env)
 
 
-class CredentialClient:
-    """``GET /v1/internal/credentials/{profile}/{service}`` with both credentials attached."""
+def _string_map(value: object) -> dict[str, str]:
+    """A string-to-string mapping out of a JSON value, or the one refusal."""
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    ):
+        raise KeyringUnavailableError(UNREADABLE)
+    return {str(key): str(item) for key, item in value.items()}
 
-    def __init__(self, client: httpx.AsyncClient, base_url: str, service_token: str) -> None:
-        """Talk to keyring at ``base_url`` as the service identified by ``service_token``."""
+
+def _bare_token(headers: Mapping[str, str], params: Mapping[str, str]) -> str | None:
+    """The credential a tool would read as ``<SERVICE>_TOKEN``, or ``None`` rather than a guess."""
+    for name, value in headers.items():
+        if name.lower() == _AUTHORIZATION:
+            match = _SCHEME_AND_CREDENTIAL.match(value)
+            return match.group(1) if match else value
+    values = [*headers.values(), *params.values()]
+    return values[0] if len(values) == 1 else None
+
+
+class CredentialClient:
+    """``resolve_credential`` through keyring-client, as environment variables and domain errors."""
+
+    def __init__(self, client: SharedCredentialClient) -> None:
+        """Resolve through ``client``, which holds this service's own keyring token."""
         self._client = client
-        self._base = base_url.rstrip("/")
-        self._service_token = service_token
 
     async def resolve(
         self, user_token: str, profile: str, service: str
@@ -78,40 +146,33 @@ class CredentialClient:
         """Resolve one credential, or ``None`` when the account has not connected the service.
 
         Raises:
-            UnauthorizedError: Keyring rejected one of the tokens.
-            KeyringUnavailableError: Keyring is down, sealed, or failed a refresh; its own
-                detail is passed through because it names the fix.
+            UnauthorizedError: keyring refused one of the two tokens. It is the refusal every
+                401 from this service uses; the user token has just verified here, so the
+                log's ``keyring_rejected_credentials`` points an operator at this service's
+                own token, or at its name in keyring's ``KEYRING_SERVICE_TOKENS``.
+            KeyringUnavailableError: keyring holds the connection and could not make it usable,
+                with keyring's own detail because it names the fix; or keyring could not be
+                reached, or answered in a way this service cannot read, with fixed text.
         """
-        url = f"{self._base}/v1/internal/credentials/{profile}/{service}"
-        headers = {
-            "Authorization": f"Bearer {self._service_token}",
-            HEADER_USER_TOKEN: user_token,
-        }
         try:
-            response = await self._client.get(url, headers=headers)
-        except httpx.HTTPError as exc:
-            raise KeyringUnavailableError(f"keyring unreachable: {exc}") from exc
-        if response.status_code == 404:
-            return None
-        if response.status_code == 401:
-            raise UnauthorizedError("keyring rejected the token", token_error="rejected")
-        if response.status_code >= 500 or response.status_code == 503:
-            raise KeyringUnavailableError(_detail_of(response))
-        if response.status_code != 200:
-            raise KeyringUnavailableError(
-                f"unexpected keyring response {response.status_code}: {_detail_of(response)}"
+            resolved = await self._client.resolve_credential(
+                user_token=user_token, profile=profile, service=service
             )
-        body = response.json()
-        if not isinstance(body, dict):
-            raise KeyringUnavailableError("keyring returned a non-object credential")
-        return parse_credential(service, body)
+        except CredentialNotFoundError:
+            return None
+        except KeyringRejectedError:
+            log.warning("keyring_rejected_credentials", service=service)
+            raise UnauthorizedError(BAD_TOKEN) from None
+        except CredentialUnavailableError as exc:
+            # Keyring's problem detail, not an exception's text: keyring-client builds this
+            # error from the body keyring wrote to name the fix, never from a transport failure.
+            raise KeyringUnavailableError(str(exc)) from None
+        except KeyringUnreachableError:
+            # keyring-client has logged the failure's type; its text, which carries the URL,
+            # goes nowhere.
+            raise KeyringUnavailableError(UNREACHABLE) from None
+        return credential_env(service, resolved.headers, resolved.query_params)
 
-
-def _detail_of(response: httpx.Response) -> str:
-    try:
-        body = response.json()
-    except ValueError:
-        return response.text or f"keyring returned {response.status_code}"
-    if isinstance(body, dict) and isinstance(body.get("detail"), str):
-        return str(body["detail"])
-    return response.text
+    async def aclose(self) -> None:
+        """Release the connection pool."""
+        await self._client.aclose()

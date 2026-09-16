@@ -7,9 +7,23 @@ PID-ownership checks are the feature, not polish.
 
 ## Identity
 
-* Only keyring-minted RS256 tokens are accepted, verified locally against keyring's JWKS.
-  `alg: none`, forged signatures, expiry, unknown key ids and a wrong `aud` are all
-  rejected (each is a named test with real signatures).
+* Only keyring-minted RS256 tokens are accepted, verified locally against keyring's JWKS by
+  `keyring-client`, the verifier the whole family shares. The issuer and audience are
+  pinned, every claim keyring mints is required, and expiry is judged by an injected clock.
+  `alg: none`, HS256 signed with the public key, forged signatures, another issuer or
+  audience, expiry, a missing key id and unknown key ids are all rejected (each is a named
+  test with real signatures).
+* Every refusal is one identical 401 body; which rule refused a token is only in the log,
+  so a forger learns nothing from the difference. Keys that cannot be fetched are a 503
+  with fixed text, and no keyring URL or transport error reaches a response or a log line.
+* An unknown key id provokes at most one JWKS fetch per `ENVAPI_JWKS_MIN_REFETCH_SECONDS`,
+  so invented key ids cannot turn inbound requests into requests to keyring.
+* The user token travels in `Authorization: Bearer`. The legacy `X-Keyring-User-Token` is
+  accepted on its own for one release; a request carrying both with different tokens, or an
+  `Authorization` header in any other shape, is refused.
+* `ENVAPI_KEYRING_SERVICE_TOKEN` is checked at startup (32+ characters, no surrounding
+  whitespace) and never appears in a representation, dump or error; neither does a caller's
+  token or an injected credential. An unknown `ENVAPI_` variable stops the service starting.
 * The account id (`sub`) namespaces every environment. Every lookup checks the owner and
   answers 404 for anything else, so a caller cannot learn whether another account's
   environment exists.

@@ -1,18 +1,41 @@
-"""Local verification of keyring service tokens.
+"""Who a request is for: the keyring user token it presents, believed by the family's rules.
 
-Tokens are RS256 JWTs with ``iss``, ``sub``, ``aud``, ``iat`` and ``exp``. ``sub`` is the
-opaque account id that namespaces everything this service stores; ``aud`` must be this
-service's name so a token minted for a sibling service cannot be replayed here.
+The rules are ``keyring_client``'s, the verifier every service in the family shares: RS256
+only, issuer and audience pinned, every claim keyring mints required, expiry judged by an
+injected clock, and signing keys fetched lazily, rate limited on an unknown ``kid`` and served
+stale through a short outage. What lives here is this service's side of them:
+
+* which header carries the token (:func:`presented_token`);
+* the audience, which is this service's name, because keyring's internal endpoint refuses a
+  user token whose ``aud`` is not the name of the service calling it; and
+* one refusal. Every token this service does not accept, whichever rule refused it, is the
+  same 401 body, because each difference a caller can see helps with the next forgery. The
+  reason goes to the log. Keys that cannot be fetched are a 503 with fixed text instead,
+  because the token may be perfectly good.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, NoReturn
 
-import jwt
+import structlog
+from keyring_client import (
+    BAD_TOKEN,
+    KEYS_UNAVAILABLE,
+    AuthenticationError,
+    ExactAudience,
+    KeyringUnreachableError,
+)
 
-from app.errors import UnauthorizedError
-from app.keyring.jwks import JWKSCache
+from app.errors import KeyringUnavailableError, UnauthorizedError
+
+if TYPE_CHECKING:
+    from keyring_client import TokenVerifier as SharedTokenVerifier
+
+log = structlog.get_logger(__name__)
+
+BEARER_SCHEME = "bearer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,51 +44,64 @@ class Caller:
 
     account_id: str
     profile: str
-    user_token: str
+    user_token: str = field(repr=False)
+
+
+def presented_token(authorization: str | None, legacy: str | None) -> str:
+    """The user token a request presents, or the one refusal.
+
+    ``Authorization: Bearer <token>`` is canonical. ``X-Keyring-User-Token`` on its own is
+    still accepted for one release, and logged so the callers still sending it can be found.
+    A request carrying both must carry the same token in each: two identities on one request
+    is a client bug at best, and at worst a bet that two checks read different headers.
+
+    Raises:
+        UnauthorizedError: no token, an ``Authorization`` header that is not ``Bearer
+            <token>``, or two headers naming different tokens.
+    """
+    token = legacy
+    if authorization is not None:
+        scheme, _, bearer = authorization.partition(" ")
+        if scheme.lower() != BEARER_SCHEME or not bearer:
+            _refuse("authorization_scheme")
+        if token and token != bearer:
+            _refuse("headers_disagree")
+        token = bearer
+    elif token:
+        log.info("legacy_user_token_header", replacement="Authorization: Bearer")
+    if not token:
+        _refuse("missing")
+    return token
+
+
+def _refuse(reason: str) -> NoReturn:
+    """Log why, and refuse in the words every other refusal uses."""
+    log.info("user_token_refused", reason=reason)
+    raise UnauthorizedError(BAD_TOKEN)
 
 
 class TokenVerifier:
-    """Verifies tokens against the JWKS and the expected audience."""
+    """Keyring's shared verifier, for this service's audience and in this service's errors."""
 
-    def __init__(self, jwks: JWKSCache, audience: str, leeway_seconds: float = 5.0) -> None:
-        """Accept tokens whose ``aud`` is ``audience`` and whose signature the JWKS confirms."""
-        self._jwks = jwks
-        self._audience = audience
-        self._leeway = leeway_seconds
+    def __init__(self, verifier: SharedTokenVerifier, audience: str) -> None:
+        """Believe what ``verifier`` believes, of tokens minted for exactly ``audience``."""
+        self._verifier = verifier
+        self._audience = ExactAudience(audience)
 
     async def verify(self, token: str) -> str:
         """Return the account id (``sub``) a valid ``token`` was minted for.
 
         Raises:
-            UnauthorizedError: For any defect: bad signature, wrong audience, expiry,
-                ``alg: none``, a missing ``sub`` or an unknown key id.
+            UnauthorizedError: the one refusal, for a bad signature, another algorithm,
+                another issuer or audience, expiry, a missing claim or key id, or a key id
+                keyring does not publish. Which of them it was is in the log.
+            KeyringUnavailableError: keyring's signing keys could not be fetched and no usable
+                copy is held, so whether the token is good is not known.
         """
         try:
-            header = jwt.get_unverified_header(token)
-        except jwt.PyJWTError as exc:
-            raise UnauthorizedError("malformed token", token_error="malformed") from exc
-        kid = header.get("kid")
-        if not isinstance(kid, str) or not kid:
-            raise UnauthorizedError("token has no key id", token_error="missing_kid")
-        key = await self._jwks.get_key(kid)
-        try:
-            claims = jwt.decode(
-                token,
-                key.key,
-                algorithms=["RS256"],
-                audience=self._audience,
-                leeway=self._leeway,
-                options={"require": ["exp", "iat", "sub", "aud"]},
-            )
-        except jwt.ExpiredSignatureError as exc:
-            raise UnauthorizedError("token has expired", token_error="expired") from exc
-        except jwt.InvalidAudienceError as exc:
-            raise UnauthorizedError(
-                "token was minted for another service", token_error="wrong_audience"
-            ) from exc
-        except jwt.PyJWTError as exc:
-            raise UnauthorizedError(f"invalid token: {exc}", token_error="invalid") from exc
-        sub = claims.get("sub")
-        if not isinstance(sub, str) or not sub:
-            raise UnauthorizedError("token has no subject", token_error="missing_sub")
-        return sub
+            identity = await self._verifier.verify(token, audience=self._audience)
+        except AuthenticationError:
+            raise UnauthorizedError(BAD_TOKEN) from None
+        except KeyringUnreachableError:
+            raise KeyringUnavailableError(KEYS_UNAVAILABLE) from None
+        return identity.account_id

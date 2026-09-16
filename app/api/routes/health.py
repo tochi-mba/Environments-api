@@ -8,47 +8,48 @@ from fastapi import APIRouter, Response
 
 from app.api.deps import JWKSDep, ServiceDep, SettingsDep
 from app.constants import SERVICE_NAME
-from app.errors import KeyringUnavailableError
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
+@router.get("/healthy", include_in_schema=False)
 async def health() -> dict[str, str]:
-    """Always 200 while the process is up; keyring's state does not change that."""
+    """Always 200 while the process is up; keyring's state does not change that.
+
+    ``/healthy`` is the name every other service in the family serves this on, and
+    ``/health`` is what this one shipped with. Both answer, so neither a sibling's
+    runbook nor an existing probe is wrong.
+    """
     return {"status": "ok", "service": SERVICE_NAME}
 
 
 @router.get("/health/ready")
+@router.get("/ready", include_in_schema=False)
 async def ready(
     response: Response, service: ServiceDep, jwks: JWKSDep, settings: SettingsDep
 ) -> dict[str, Any]:
     """The sandbox tier in use and whether tokens can currently be verified.
 
-    503 only when keyring is unreachable and no signing key was ever cached, because then
-    no request could be authenticated. With cached keys the service keeps working through
-    a keyring outage until the keys rotate.
+    Asks keyring's signing-key document, never keyring's own ``/healthy``: that answers 503
+    whenever any stored connection is unusable, which says nothing about whether a token can
+    be verified here. 503 only when no usable key is held and none can be fetched, because
+    then no request could be authenticated. Through a keyring outage the keys already held
+    keep verifying tokens for a bounded grace, and this says so.
     """
-    keyring_error: str | None = None
-    keyring_status = "cached"
-    try:
-        if await jwks.ensure_fresh():
-            keyring_status = "fresh"
-    except KeyringUnavailableError as exc:
-        keyring_error = exc.detail
+    usable, problem = await jwks.healthy()
+    if not usable:
         keyring_status = "unreachable"
-    ready = keyring_error is None or jwks.has_keys
-    response.status_code = 200 if ready else 503
+    elif problem is not None:
+        keyring_status = "stale"
+    else:
+        keyring_status = "ok"
+    response.status_code = 200 if usable else 503
     return {
-        "status": "ready" if ready else "not_ready",
+        "status": "ready" if usable else "not_ready",
         "sandbox_tier": service.sandbox_tier,
         "min_sandbox_tier": settings.min_sandbox_tier,
         "allow_network": settings.allow_network,
-        "keyring": {
-            # "cached": keys still within their TTL, keyring not contacted this call;
-            # "fresh": fetched just now; "unreachable": a needed fetch failed.
-            "status": keyring_status,
-            "keys_cached": jwks.has_keys,
-            "error": keyring_error,
-        },
+        # "error" is keyring-client's fixed text, never a URL or an exception's message.
+        "keyring": {"status": keyring_status, "error": problem},
     }

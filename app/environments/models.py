@@ -48,3 +48,19 @@ class EnvironmentRecord(BaseModel):
     last_activity_at: float
     archived_at: float | None = None
     shells: list[ShellRecord] = Field(default_factory=list)
+    # Stamped at create from settings-api. ``None`` on records created while settings-api
+    # was off, so the reaper keeps using QuotaStore / deployment TTLs for those.
+    environment_idle_ttl_seconds: float | None = None
+    shell_idle_ttl_seconds: float | None = None
+
+    def environment_idle_ttl(self, fallback: float) -> float:
+        """Seconds of quiet before archive: stamped at create, otherwise ``fallback``."""
+        if self.environment_idle_ttl_seconds is None:
+            return fallback
+        return self.environment_idle_ttl_seconds
+
+    def shell_idle_ttl(self, fallback: float) -> float:
+        """Seconds of quiet before a shell is closed: stamped at create, otherwise ``fallback``."""
+        if self.shell_idle_ttl_seconds is None:
+            return fallback
+        return self.shell_idle_ttl_seconds

@@ -10,11 +10,12 @@ from that.
 |---|---|
 | `app/settings.py` | `ENVAPI_`-prefixed configuration, every quota default. |
 | `app/errors.py` | `DomainError` subclasses and their RFC 9457 `application/problem+json` rendering. Routes never touch status codes. |
-| `app/keyring/` | JWKS fetch and cache, local RS256 verification into a `Caller`, credential resolution. |
+| `app/keyring/` | This service's side of `keyring-client`: which header carries the user token, one refusal for every rejected token, and keyring's credential answer as environment variables. |
 | `app/sandbox/` | The `Sandbox` protocol, capability detection, and the three tiers. |
 | `app/paths.py`, `app/files.py` | Resolve-then-check path containment and the files API. |
 | `app/shells/` | Ring buffer, command framing, secret redaction, and the `Shell` process wrapper. |
 | `app/procfs.py`, `app/processes.py` | `/proc` inspection and the process-ownership guard. |
+| `app/preferences.py` | The one place settings-api is spoken to. Per-person idle TTLs, the per-profile cap, and `common.default_profile`. |
 | `app/environments/` | Durable records, the on-disk store, quotas, the orchestrating service, and the reaper's work. |
 | `app/audit.py` | Append-only JSON-lines log of every privileged action. |
 | `app/api/` | Dependencies, request schemas, routes. |
@@ -24,7 +25,7 @@ from that.
 
 ```
 Account (keyring `sub`)
-└── Profile (X-Keyring-Profile header, default ENVAPI_DEFAULT_PROFILE)
+└── Profile (X-Keyring-Profile header, or `common.default_profile` / `ENVAPI_DEFAULT_PROFILE`)
     └── Environment  — durable folder, labels, declared credentials, limits, state
         ├── workspace/           the only writable place a shell gets
         ├── logs/<cmd>.log|.json full output and metadata per command
@@ -39,9 +40,11 @@ left behind is killed during startup reconciliation (see below).
 
 ## Request flow
 
-1. `get_caller` checks the optional `X-API-Key` gate, then verifies `X-Keyring-User-Token`
-   locally against keyring's JWKS. `sub` becomes the account id; `aud` must equal
-   `ENVAPI_KEYRING_SERVICE_NAME`.
+1. `get_caller` checks the optional `X-API-Key` gate, then verifies the user token from
+   `Authorization: Bearer` (or, for one release, `X-Keyring-User-Token`) locally against
+   keyring's JWKS with keyring-client. `sub` becomes the account id; `iss` must equal
+   `ENVAPI_KEYRING_ISSUER` and `aud` must equal `ENVAPI_KEYRING_SERVICE_NAME`. Every
+   refusal is the same 401.
 2. Every service method takes the `Caller` and refuses, with a 404, anything the account
    does not own. That one check is the isolation between accounts.
 3. Blocking work (spawning, waiting, killing with a grace period, disk scans) runs in a
@@ -89,8 +92,11 @@ record becomes `dead` / `service_restarted`.
 ## The reaper
 
 A background task runs `EnvironmentService.reap()` every `ENVAPI_REAPER_INTERVAL_SECONDS`.
-It closes shells idle longer than `shell_idle_ttl_seconds`, archives environments idle
-longer than `environment_idle_ttl_seconds` (workspace and logs wiped, record kept; `reset`
-revives), prunes logs oldest-first to `max_command_log_bytes`, and refreshes the per-
-environment disk usage that `max_disk_bytes` is enforced against. Without it the service
-would leak processes and disk until the box fell over.
+It closes shells idle longer than the environment's stamped `shell_idle_ttl_seconds` (or
+the account's QuotaStore / deployment value when the record has none -- records created
+while settings-api was off), archives environments idle longer than the matching
+environment TTL (workspace and logs wiped, record kept; `reset` revives), prunes logs
+oldest-first to `max_command_log_bytes`, and refreshes the per-environment disk usage that
+`max_disk_bytes` is enforced against. The reaper has no user token, so it never calls
+settings-api: idle lifetimes are resolved at create and stored on the record. Without it
+the service would leak processes and disk until the box fell over.

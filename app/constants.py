@@ -12,6 +12,8 @@ from enum import IntEnum, StrEnum
 SERVICE_NAME = "environments-api"
 PROBLEM_JSON = "application/problem+json"
 
+HEADER_AUTHORIZATION = "Authorization"
+# Superseded by ``Authorization: Bearer``; still accepted on its own for one release.
 HEADER_USER_TOKEN = "X-Keyring-User-Token"
 HEADER_PROFILE = "X-Keyring-Profile"
 HEADER_API_KEY = "X-API-Key"

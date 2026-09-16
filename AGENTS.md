@@ -13,7 +13,9 @@ security change.
 ## Conventions
 
 * Python 3.11, `uv`, FastAPI, httpx, structlog, pytest + pytest-asyncio, ruff,
-  `mypy --strict`, `pyjwt[crypto]`. Line length 100; `ruff format` decides formatting.
+  `mypy --strict`, and `keyring-client` from the sibling `../Keyring-api` checkout for
+  everything that believes a keyring token or fetches a credential. Line length 100;
+  `ruff format` decides formatting.
 * Google-style docstrings on every public module, class and function.
 * Comments explain *why*, never *what*. A comment that restates the code is deleted; one
   that records a constraint, a trade-off or a non-obvious failure earns its place.
@@ -51,5 +53,5 @@ security change.
 
 ## Running locally
 
-`uv run python scripts/dev_keyring.py` (a keyring stand-in on :8000), then `make run`,
-then `make smoke`.
+`uv run python scripts/dev_keyring.py` (a keyring stand-in on :8001 that accepts the service
+token in `.env.example`), then `make run`, then `make smoke`.
