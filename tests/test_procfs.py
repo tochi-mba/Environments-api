@@ -73,3 +73,11 @@ def test_descendants_and_identity() -> None:
         child.kill()
         child.wait()
     assert not procfs.is_same_process(child.pid, stat.start_ticks)
+
+
+def test_snapshot_skips_entries_that_are_not_processes_or_have_gone(tmp_path: Path) -> None:
+    # A pid directory can vanish between listing /proc and reading its stat, and /proc holds
+    # plenty that is not a pid at all. Neither may take the snapshot down.
+    (tmp_path / "123").mkdir()
+    (tmp_path / "self").mkdir()
+    assert procfs.snapshot(proc=tmp_path) == {}
