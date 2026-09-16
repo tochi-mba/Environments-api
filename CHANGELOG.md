@@ -23,6 +23,11 @@ All notable changes to this service are recorded here. The format follows
 
 ### Changed
 
+- Keep shell scripts LF-terminated on Windows checkouts so Linux image builds can run
+  the namespace sandbox without shell parsing failures.
+- CI inherits `FAMILY_GITHUB_TOKEN`; image builds accept a BuildKit `github_token`
+  secret so tagged client packages can be fetched from private family repositories.
+  `make docker` uses the signed-in GitHub account without saving its token in an image.
 - **Breaking:** `Authorization: Bearer <keyring user token>` is the canonical way to present
   a token. `X-Keyring-User-Token` is still accepted on its own for one release and logged as
   `legacy_user_token_header`. A request carrying both must carry the same token in each, and

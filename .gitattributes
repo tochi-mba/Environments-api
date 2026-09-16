@@ -1,0 +1,2 @@
+# Linux executes these files even when the build context is a Windows checkout.
+*.sh text eol=lf

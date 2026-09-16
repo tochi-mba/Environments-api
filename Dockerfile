@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM python:3.11-slim
 
 # util-linux: unshare and setpriv (namespace tier); passwd: useradd/userdel (user tier);
@@ -9,9 +11,23 @@ RUN apt-get update \
 
 WORKDIR /srv/environments-api
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+# The token exists only for this RUN, in git's process environment, never a layer.
+# Without a secret, public sources are fetched anonymously.
+RUN --mount=type=secret,id=github_token,required=false \
+    if [ -s /run/secrets/github_token ]; then \
+        export GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/github_token)@github.com/.insteadOf" \
+          GIT_CONFIG_VALUE_0="https://github.com/"; \
+    fi \
+    && uv sync --frozen --no-dev --no-install-project
 COPY app ./app
-RUN uv sync --frozen --no-dev
+RUN --mount=type=secret,id=github_token,required=false \
+    if [ -s /run/secrets/github_token ]; then \
+        export GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/github_token)@github.com/.insteadOf" \
+          GIT_CONFIG_VALUE_0="https://github.com/"; \
+    fi \
+    && uv sync --frozen --no-dev
 
 ENV ENVAPI_ROOT=/var/lib/envapi \
     ENVAPI_MIN_SANDBOX_TIER=user \

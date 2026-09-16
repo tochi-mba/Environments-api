@@ -107,7 +107,7 @@ See `docs/testing.md`.
 ## Docker
 
 ```
-docker build -t environments-api .
+GITHUB_TOKEN="$(gh auth token)" docker build --secret id=github_token,env=GITHUB_TOKEN -t environments-api .
 docker run --privileged -p 8008:8008 -v envapi:/var/lib/envapi \
   -e ENVAPI_KEYRING_BASE_URL=http://keyring:8001 -e ENVAPI_KEYRING_ISSUER=… \
   -e ENVAPI_KEYRING_SERVICE_TOKEN=… \
