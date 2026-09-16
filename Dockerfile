@@ -3,7 +3,7 @@ FROM python:3.11-slim
 # util-linux: unshare and setpriv (namespace tier); passwd: useradd/userdel (user tier);
 # procps is convenient for debugging inside the container.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends util-linux passwd bash procps ca-certificates \
+    && apt-get install -y --no-install-recommends util-linux passwd bash procps ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv
 
