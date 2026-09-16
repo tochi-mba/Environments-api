@@ -254,7 +254,9 @@ async def test_reaper_loop_runs_and_survives_errors(
         calls.append(1)
         if len(calls) == 1:
             raise RuntimeError("one bad pass")
-        if len(calls) >= 3:
+        # Signal on the pass after the empty one, so the loop has visibly gone round
+        # again with nothing to report before the app is shut down.
+        if len(calls) >= 4:
             loop.call_soon_threadsafe(seen.set)
         from app.environments.service import ReapReport
 
@@ -264,7 +266,7 @@ async def test_reaper_loop_runs_and_survives_errors(
     app = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with app.router.lifespan_context(app):
         await asyncio.wait_for(seen.wait(), 10)
-    assert len(calls) >= 3
+    assert len(calls) >= 4
 
 
 async def test_keyring_clients_start_without_a_fetch_and_close_with_the_app(
