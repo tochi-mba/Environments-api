@@ -41,7 +41,8 @@ def test_audit_tail_edge_cases(tmp_path: Path) -> None:
     audit = AuditLog(tmp_path / "audit.jsonl")
     assert audit.tail(10) == []
     audit.record("a", "acct")
-    (tmp_path / "audit.jsonl").open("a").write("not json\n")
+    with (tmp_path / "audit.jsonl").open("a") as log:
+        log.write("not json\n")
     audit.record("b", "other")
     assert [e["action"] for e in audit.tail(10)] == ["a", "b"]
     assert [e["action"] for e in audit.tail(10, "acct")] == ["a"]
