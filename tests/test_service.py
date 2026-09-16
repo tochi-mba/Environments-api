@@ -23,6 +23,7 @@ from app.errors import (
 )
 from app.keyring.auth import Caller
 from app.keyring.client import ResolvedCredential
+from app.preferences import Preferences
 from app.sandbox.directory import DirectorySandbox
 from app.settings import Settings
 from tests.conftest import Clock
@@ -309,6 +310,90 @@ def test_reaper_closes_idle_shells_and_prunes_logs(
     # A record deleted mid-pass is skipped rather than resurrected.
     service.delete(ALICE, record.id)
     assert service.reap().usage == {}
+
+
+def test_reaper_uses_idle_ttls_stamped_at_create(settings: Settings, clock: Clock) -> None:
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": "settings-api-token-for-environments-01",
+            "environment_idle_ttl_seconds": 86_400,
+        }
+    )
+    service = build_service(settings, clock)
+    try:
+        prefs = Preferences(
+            environment_idle_ttl_seconds=60,
+            shell_idle_ttl_seconds=15,
+            max_environments_per_profile=5,
+            default_profile="personal",
+        )
+        record = service.create(ALICE, "short", {}, [], None, None, prefs)
+        clock.now += 61
+        report = service.reap()
+        assert report.environments_archived == 1
+        assert service.get(ALICE, record.id).state is EnvironmentState.ARCHIVED
+    finally:
+        service.shutdown()
+
+
+def test_create_without_settings_api_does_not_stamp(service: EnvironmentService) -> None:
+    prefs = Preferences(
+        environment_idle_ttl_seconds=60,
+        shell_idle_ttl_seconds=15,
+        max_environments_per_profile=1,
+        default_profile="personal",
+    )
+    first = service.create(ALICE, "one", {}, [], None, None, prefs)
+    second = service.create(ALICE, "two", {}, [], None, None, prefs)
+    assert first.environment_idle_ttl_seconds is None
+    assert first.shell_idle_ttl_seconds is None
+    assert second.id != first.id
+
+
+def test_create_with_settings_api_stamps_ttls_and_honours_the_lower_cap(
+    settings: Settings, clock: Clock
+) -> None:
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": "settings-api-token-for-environments-01",
+            "max_environments_per_profile": 2,
+        }
+    )
+    service = build_service(settings, clock)
+    try:
+        prefs = Preferences(
+            environment_idle_ttl_seconds=60,
+            shell_idle_ttl_seconds=15,
+            max_environments_per_profile=1,
+            default_profile="personal",
+        )
+        record = service.create(ALICE, "one", {}, [], None, None, prefs)
+        assert record.environment_idle_ttl_seconds == 60
+        assert record.shell_idle_ttl_seconds == 15
+        loaded = EnvironmentRecord.model_validate_json(
+            (
+                settings.root / "accounts" / "alice" / "personal" / record.id / "environment.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert loaded.environment_idle_ttl_seconds == 60
+        assert loaded.shell_idle_ttl_seconds == 15
+        with pytest.raises(QuotaExceededError) as caught:
+            service.create(ALICE, "two", {}, [], None, None, prefs)
+        assert caught.value.extra["limit"] == "max_environments_per_profile"
+        assert caught.value.extra["maximum"] == 1
+        later = Preferences(
+            environment_idle_ttl_seconds=120,
+            shell_idle_ttl_seconds=30,
+            max_environments_per_profile=5,
+            default_profile="work",
+        )
+        other = service.create(ALICE_WORK, "work", {}, [], None, None, later)
+        assert record.environment_idle_ttl_seconds == 60
+        assert other.environment_idle_ttl_seconds == 120
+    finally:
+        service.shutdown()
 
 
 def test_restart_reconciles_orphans(settings: Settings, clock: Clock) -> None:

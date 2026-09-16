@@ -8,16 +8,20 @@ containment errors.
 
 | Header | Required | Meaning |
 |---|---|---|
-| `X-Keyring-User-Token` | yes | Keyring service token minted for `environments-api`. Verified locally. |
-| `X-Keyring-Profile` | no | Which profile; defaults to `ENVAPI_DEFAULT_PROFILE`. |
-| `X-API-Key` | when `ENVAPI_API_KEYS` is set | Optional front-door gate. |
+| `Authorization: Bearer <token>` | yes | Keyring user token minted for `environments-api`. Verified locally; see `keyring.md`. |
+| `X-Keyring-User-Token` | deprecated | The same token, accepted on its own for one release. Sent with `Authorization` as well, both must carry the same token. |
+| `X-Keyring-Profile` | no | Which profile. When omitted: the person's `common.default_profile` if settings-api is configured, otherwise `ENVAPI_DEFAULT_PROFILE`. A configured settings-api that cannot be reached refuses rather than guessing `personal` (503 `preferences_unavailable`). |
+| `X-API-Key` | when `ENVAPI_API_KEYS` is set | Optional front-door gate. `Authorization` never satisfies it. |
+
+Every token refusal is the same 401 body with `detail: "the token was not accepted"`,
+whichever rule refused it. Which rule it was is only in the service's log.
 
 ## Health
 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/health` | Always 200 while the process is up. |
-| GET | `/health/ready` | Active sandbox tier and keyring state. 503 only when keyring is unreachable *and* no signing key was ever cached. `keyring.status` is `fresh` (fetched now), `cached` (within TTL, keyring not contacted) or `unreachable`. |
+| GET | `/health/ready` | Active sandbox tier and keyring state, read from keyring's JWKS document. `keyring.status` is `ok` (keys held or just fetched), `stale` (keyring unreachable; keys already held still verify tokens) or `unreachable` (no usable key, and 503). `keyring.error` is fixed text or `null`. |
 
 ## Environments
 

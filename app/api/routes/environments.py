@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Response
 
-from app.api.deps import CallerDep, ServiceDep, SettingsDep
+from app.api.deps import CallerDep, PreferenceSourceDep, ServiceDep, SettingsDep
 from app.api.schemas import CreateEnvironmentRequest
 from app.constants import EnvironmentState
 
@@ -16,11 +16,22 @@ router = APIRouter(prefix="/v1/environments", tags=["environments"])
 
 @router.post("", status_code=201)
 async def create_environment(
-    body: CreateEnvironmentRequest, caller: CallerDep, service: ServiceDep
+    body: CreateEnvironmentRequest,
+    caller: CallerDep,
+    service: ServiceDep,
+    preferences: PreferenceSourceDep,
 ) -> dict[str, Any]:
     """Create an environment under the caller's account and profile."""
+    chosen = await preferences.for_token(caller.user_token)
     record = await asyncio.to_thread(
-        service.create, caller, body.name, body.labels, body.credentials, body.network, body.limits
+        service.create,
+        caller,
+        body.name,
+        body.labels,
+        body.credentials,
+        body.network,
+        body.limits,
+        chosen,
     )
     return service.environment_view(record)
 

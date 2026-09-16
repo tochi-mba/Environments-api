@@ -9,13 +9,20 @@ import structlog
 from fastapi import Depends, Request
 
 from app.audit import AuditLog
-from app.constants import HEADER_API_KEY, HEADER_PROFILE, HEADER_USER_TOKEN, PROFILE_PATTERN
+from app.constants import (
+    HEADER_API_KEY,
+    HEADER_AUTHORIZATION,
+    HEADER_PROFILE,
+    HEADER_USER_TOKEN,
+    PROFILE_PATTERN,
+)
 from app.environments.service import EnvironmentService
 from app.errors import ForbiddenError, UnauthorizedError, ValidationError
 from app.files import FileService
-from app.keyring.auth import Caller, TokenVerifier
+from app.keyring import JwksClient
+from app.keyring.auth import Caller, TokenVerifier, presented_token
 from app.keyring.client import CredentialClient
-from app.keyring.jwks import JWKSCache
+from app.preferences import PreferenceSource
 from app.settings import Settings
 
 
@@ -37,9 +44,9 @@ def get_verifier(request: Request) -> TokenVerifier:
     return verifier
 
 
-def get_jwks(request: Request) -> JWKSCache:
-    """The JWKS cache."""
-    jwks: JWKSCache = request.app.state.jwks
+def get_jwks(request: Request) -> JwksClient:
+    """Keyring's signing keys, as held for verifying tokens."""
+    jwks: JwksClient = request.app.state.jwks
     return jwks
 
 
@@ -61,23 +68,44 @@ def get_audit(request: Request) -> AuditLog:
     return audit
 
 
+def get_preference_source(request: Request) -> PreferenceSource:
+    """Where this request's per-person settings come from."""
+    preferences: PreferenceSource = request.app.state.preferences
+    return preferences
+
+
 async def get_caller(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
     verifier: Annotated[TokenVerifier, Depends(get_verifier)],
+    preferences: Annotated[PreferenceSource, Depends(get_preference_source)],
 ) -> Caller:
-    """Authenticate the request: optional API key gate, then the keyring user token."""
+    """Authenticate the request: optional API key gate, then the keyring user token.
+
+    The API key has its own header, and ``Authorization`` never stands in for it: a
+    deployment that sets ``ENVAPI_API_KEYS`` needs both on every request.
+
+    ``X-Keyring-Profile`` is used as named. When it is absent, ``common.default_profile``
+    fills in if settings-api is in use, otherwise ``ENVAPI_DEFAULT_PROFILE``. Guessing
+    ``personal`` during an outage is refused.
+
+    Raises:
+        PreferencesUnavailableError: settings-api refused this service, or the request
+            named no profile and the default must not be guessed.
+    """
     if settings.api_keys:
         presented = request.headers.get(HEADER_API_KEY, "")
         if not any(hmac.compare_digest(presented, key) for key in settings.api_keys):
             raise UnauthorizedError("missing or invalid API key", header=HEADER_API_KEY)
-    token = request.headers.get(HEADER_USER_TOKEN, "").strip()
-    if not token:
-        raise UnauthorizedError(f"{HEADER_USER_TOKEN} header is required", header=HEADER_USER_TOKEN)
-    profile = request.headers.get(HEADER_PROFILE, "").strip() or settings.default_profile
+    token = presented_token(
+        request.headers.get(HEADER_AUTHORIZATION), request.headers.get(HEADER_USER_TOKEN)
+    )
+    account_id = await verifier.verify(token)
+    requested = request.headers.get(HEADER_PROFILE, "").strip() or None
+    chosen = await preferences.for_token(token)
+    profile = chosen.profile(requested)
     if not PROFILE_PATTERN.match(profile):
         raise ValidationError(f"invalid profile name {profile!r}", header=HEADER_PROFILE)
-    account_id = await verifier.verify(token)
     structlog.contextvars.bind_contextvars(account_id=account_id, profile=profile)
     return Caller(account_id=account_id, profile=profile, user_token=token)
 
@@ -102,4 +130,5 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 FilesDep = Annotated[FileService, Depends(get_files)]
 CredentialsDep = Annotated[CredentialClient, Depends(get_credentials)]
 AuditDep = Annotated[AuditLog, Depends(get_audit)]
-JWKSDep = Annotated[JWKSCache, Depends(get_jwks)]
+JWKSDep = Annotated[JwksClient, Depends(get_jwks)]
+PreferenceSourceDep = Annotated[PreferenceSource, Depends(get_preference_source)]

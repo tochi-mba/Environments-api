@@ -66,11 +66,12 @@ from collections.abc import AsyncIterator  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import httpx  # noqa: E402
+from pydantic import SecretStr  # noqa: E402
 
 from app.main import create_app  # noqa: E402
 from app.sandbox.detect import HostCapabilities  # noqa: E402
 from app.settings import Settings  # noqa: E402
-from tests.fake_keyring import SERVICE_TOKEN, FakeKeyring  # noqa: E402
+from tests.fake_keyring import BASE_URL, ISSUER, SERVICE_TOKEN, FakeKeyring  # noqa: E402
 
 NO_SANDBOX = HostCapabilities(
     is_root=False, has_useradd=False, has_setpriv=False, unshare_works=False
@@ -87,8 +88,9 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(
         _env_file=None,  # type: ignore[call-arg]
         root=tmp_path / "data",
-        keyring_base_url="http://keyring",
-        keyring_service_token=SERVICE_TOKEN,
+        keyring_base_url=BASE_URL,
+        keyring_issuer=ISSUER,
+        keyring_service_token=SecretStr(SERVICE_TOKEN),
         operator_accounts="ops",  # type: ignore[arg-type]
         reaper_interval_seconds=3600,
         shell_close_grace_seconds=1.0,
@@ -104,7 +106,7 @@ def settings(tmp_path: Path) -> Settings:
 
 
 def auth_headers(keyring: FakeKeyring, account: str, profile: str | None = None) -> dict[str, str]:
-    headers = {"X-Keyring-User-Token": keyring.mint(account)}
+    headers = {"Authorization": f"Bearer {keyring.mint(account_id=account)}"}
     if profile:
         headers["X-Keyring-Profile"] = profile
     return headers
@@ -112,7 +114,7 @@ def auth_headers(keyring: FakeKeyring, account: str, profile: str | None = None)
 
 @pytest.fixture
 async def client(settings: Settings, keyring: FakeKeyring) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(settings, http_client=keyring.client(), capabilities=NO_SANDBOX)
+    app = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://envapi") as http:

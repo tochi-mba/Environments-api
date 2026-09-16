@@ -8,12 +8,15 @@ from typing import Any
 
 import httpx
 import pytest
+from keyring_client import BAD_TOKEN, KEYS_STALE, KEYS_UNAVAILABLE
+from keyring_client.testing import ROTATED_KEY, FakeClock, forge_hs256, mint
 
 from app.constants import PROBLEM_JSON
 from app.main import create_app
+from app.preferences import PROFILE_UNKNOWN, REFUSED, SettingsApiPreferences
 from app.settings import Settings
 from tests.conftest import NO_SANDBOX, auth_headers
-from tests.fake_keyring import FakeKeyring
+from tests.fake_keyring import AUDIENCE, ISSUER, FakeKeyring
 
 
 async def create_env(
@@ -49,35 +52,96 @@ async def test_health(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
     response = await client.get("/health/ready")
     assert response.status_code == 200
     body = response.json()
-    assert body["sandbox_tier"] == "directory" and body["keyring"]["status"] == "fresh"
-    keyring.down = True
+    assert body["sandbox_tier"] == "directory"
+    assert body["keyring"] == {"status": "ok", "error": None} and keyring.fetches == 1
+    keyring.error = httpx.ConnectError("keyring is down")
     response = await client.get("/health/ready")
-    assert response.status_code == 200
-    assert response.json()["keyring"] == {"status": "cached", "keys_cached": True, "error": None}
+    # Keys fetched a moment ago are still fresh, so keyring is not asked again.
+    assert response.status_code == 200 and response.json()["keyring"]["status"] == "ok"
+    assert keyring.fetches == 1
 
 
 async def test_ready_without_keys_is_503(settings: Settings, keyring: FakeKeyring) -> None:
-    keyring.down = True
-    app = create_app(settings, http_client=keyring.client(), capabilities=NO_SANDBOX)
+    keyring.error = httpx.ConnectError("refused by https://operator:hunter2@keyring.test")
+    app = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             response = await client.get("/health/ready")
             assert response.status_code == 503
-            assert response.json()["keyring"]["status"] == "unreachable"
-            assert response.json()["keyring"]["error"]
+            assert response.json()["keyring"] == {
+                "status": "unreachable",
+                "error": KEYS_UNAVAILABLE,
+            }
             response = await client.get("/v1/environments", headers=auth_headers(keyring, "a"))
-            assert (
-                response.status_code == 503 and problem(response)["code"] == "keyring_unavailable"
-            )
+            body = problem(response)
+            assert response.status_code == 503 and body["code"] == "keyring_unavailable"
+            assert body["detail"] == KEYS_UNAVAILABLE
+            assert "hunter2" not in response.text and "keyring.test" not in response.text
 
 
-async def test_auth_failures(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
-    response = await client.get("/v1/environments")
-    assert response.status_code == 401 and problem(response)["code"] == "unauthorized"
-    bad = {"X-Keyring-User-Token": keyring.mint("a", audience="web-search-api")}
-    response = await client.get("/v1/environments", headers=bad)
-    assert problem(response)["token_error"] == "wrong_audience"
+async def test_keys_are_served_stale_through_a_keyring_outage(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    clock = FakeClock()
+    app = create_app(
+        settings, keyring_transport=keyring.transport(), clock=clock, capabilities=NO_SANDBOX
+    )
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            alice = auth_headers(keyring, "alice")
+            assert (await client.get("/v1/environments", headers=alice)).status_code == 200
+            keyring.error = httpx.ConnectError("keyring is down")
+            clock.advance(settings.jwks_cache_seconds + 1)
+            assert (await client.get("/v1/environments", headers=alice)).status_code == 200
+            response = await client.get("/health/ready")
+            assert response.status_code == 200
+            assert response.json()["keyring"] == {"status": "stale", "error": KEYS_STALE}
+
+
+async def test_bearer_is_canonical_and_the_legacy_header_still_works(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    token = keyring.mint(account_id="alice")
+    for headers in (
+        {"Authorization": f"Bearer {token}"},
+        {"Authorization": f"bearer {token}"},
+        {"X-Keyring-User-Token": token},
+        {"Authorization": f"Bearer {token}", "X-Keyring-User-Token": token},
+    ):
+        response = await client.get("/v1/environments", headers=headers)
+        assert response.status_code == 200, headers
+
+
+async def test_every_token_refusal_is_the_same_401(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    """A caller learns nothing from which rule refused its token; the log says which."""
+    alice = keyring.mint(account_id="alice")
+    bob = keyring.mint(account_id="bob")
+    foreign = keyring.mint(account_id="alice", audience="web-search-api")
+    elsewhere = mint(audience=AUDIENCE, issuer="https://another-keyring.test")
+    unpublished = mint(audience=AUDIENCE, issuer=ISSUER, key=ROTATED_KEY)
+    refused: list[dict[str, str]] = [
+        {},
+        {"Authorization": f"Basic {alice}"},
+        {"Authorization": "Bearer"},
+        {"Authorization": f"Bearer {alice}", "X-Keyring-User-Token": bob},
+        {"Authorization": f"Bearer {foreign}"},
+        {"Authorization": f"Bearer {elsewhere}"},
+        {"Authorization": f"Bearer {forge_hs256(audience=AUDIENCE, issuer=ISSUER)}"},
+        # Asked about after keyring's keys were fetched successfully: not an outage, a 401.
+        {"Authorization": f"Bearer {unpublished}"},
+        {"X-Keyring-User-Token": "not-a-jwt"},
+    ]
+    bodies = []
+    for headers in refused:
+        response = await client.get("/v1/environments", headers=headers)
+        assert response.status_code == 401, headers
+        bodies.append(problem(response))
+    assert all(body == bodies[0] for body in bodies)
+    assert bodies[0]["detail"] == BAD_TOKEN and "token_error" not in bodies[0]
     response = await client.get(
         "/v1/environments",
         headers={**auth_headers(keyring, "a"), "X-Keyring-Profile": "Bad Profile"},
@@ -91,12 +155,15 @@ async def test_auth_failures(client: httpx.AsyncClient, keyring: FakeKeyring) ->
 
 async def test_api_key_gate(settings: Settings, keyring: FakeKeyring) -> None:
     settings = settings.model_copy(update={"api_keys": ["k1", "k2"]})
-    app = create_app(settings, http_client=keyring.client(), capabilities=NO_SANDBOX)
+    app = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             headers = auth_headers(keyring, "a")
             response = await client.get("/v1/environments", headers=headers)
+            assert response.status_code == 401 and problem(response)["header"] == "X-API-Key"
+            # Authorization carries the user token and never stands in for an API key.
+            response = await client.get("/v1/environments", headers={"Authorization": "Bearer k2"})
             assert response.status_code == 401 and problem(response)["header"] == "X-API-Key"
             response = await client.get("/v1/environments", headers={**headers, "X-API-Key": "k2"})
             assert response.status_code == 200
@@ -345,7 +412,12 @@ async def test_files(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
 
 async def test_exec_once(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
     alice = auth_headers(keyring, "alice")
-    keyring.credentials[("personal", "github")] = {"value": "ghp_sekretsekret"}
+    keyring.connect(
+        account_id="alice",
+        profile="personal",
+        service="github",
+        headers={"Authorization": "Bearer ghp_sekretsekret"},
+    )
     env = await create_env(client, alice, credentials=["github", "npm"])
     response = await client.post(
         "/v1/exec",
@@ -424,7 +496,7 @@ async def test_unexpected_error_is_problem_json(
 
 async def test_restart_over_http(settings: Settings, keyring: FakeKeyring) -> None:
     alice = auth_headers(keyring, "alice")
-    app = create_app(settings, http_client=keyring.client(), capabilities=NO_SANDBOX)
+    app = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with (
         app.router.lifespan_context(app),
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client,
@@ -438,7 +510,7 @@ async def test_restart_over_http(settings: Settings, keyring: FakeKeyring) -> No
         )
         cmd = response.json()
         assert cmd["exit_code"] == 0
-    reborn = create_app(settings, http_client=keyring.client(), capabilities=NO_SANDBOX)
+    reborn = create_app(settings, keyring_transport=keyring.transport(), capabilities=NO_SANDBOX)
     async with (
         reborn.router.lifespan_context(reborn),
         httpx.AsyncClient(transport=httpx.ASGITransport(app=reborn), base_url="http://t") as client,
@@ -467,16 +539,211 @@ def test_signal_parsing() -> None:
             parse_signal(bad)
 
 
-def test_settings_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ENVAPI_OPERATOR_ACCOUNTS", "a, b ,,c")
-    monkeypatch.setenv("ENVAPI_MIN_SANDBOX_TIER", "USER")
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
-    assert settings.operator_accounts == ["a", "b", "c"] and settings.min_sandbox_tier == "user"
-    assert settings.jwks_url == "http://localhost:8000/.well-known/jwks.json"
-    monkeypatch.setenv("ENVAPI_MIN_SANDBOX_TIER", "bogus")
-    with pytest.raises(ValueError, match="unknown sandbox tier"):
-        Settings(_env_file=None)  # type: ignore[call-arg]
-    monkeypatch.delenv("ENVAPI_MIN_SANDBOX_TIER")
-    assert Settings(_env_file=None, api_keys=["x"]).api_keys == ["x"]  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="comma-separated"):
-        Settings(_env_file=None, api_keys=5)  # type: ignore[call-arg,arg-type]
+SETTINGS_API_TOKEN = "settings-api-token-for-environments-01"
+HOUR = 3_600
+
+
+async def test_create_stamps_the_persons_idle_ttls_and_default_profile(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    from settings_client.testing import FakeSettingsClient
+
+    fake = FakeSettingsClient()
+    fake.seed(
+        "environments",
+        {
+            "idle_environment_hours": 1,
+            "idle_shell_minutes": 5,
+            "max_environments_per_profile": 3,
+            "default_profile": "work",
+        },
+    )
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": SETTINGS_API_TOKEN,
+        }
+    )
+    app = create_app(
+        settings,
+        keyring_transport=keyring.transport(),
+        capabilities=NO_SANDBOX,
+        settings_client=fake,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client,
+    ):
+        response = await client.post(
+            "/v1/environments", json={"name": "scratch"}, headers=auth_headers(keyring, "alice")
+        )
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["profile"] == "work"
+        assert body["environment_idle_ttl_seconds"] == HOUR
+        assert body["shell_idle_ttl_seconds"] == 5 * 60
+
+
+async def test_an_outage_without_a_named_profile_is_503(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    from settings_client.testing import FakeSettingsClient
+
+    fake = FakeSettingsClient()
+    fake.unavailable = True
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": SETTINGS_API_TOKEN,
+        }
+    )
+    app = create_app(
+        settings,
+        keyring_transport=keyring.transport(),
+        capabilities=NO_SANDBOX,
+        settings_client=fake,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client,
+    ):
+        response = await client.get("/v1/environments", headers=auth_headers(keyring, "alice"))
+        body = problem(response)
+        assert response.status_code == 503 and body["code"] == "preferences_unavailable"
+        assert body["detail"] == PROFILE_UNKNOWN
+
+
+async def test_an_outage_with_a_named_profile_stamps_deployment_values(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    from settings_client.testing import FakeSettingsClient
+
+    fake = FakeSettingsClient()
+    fake.unavailable = True
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": SETTINGS_API_TOKEN,
+        }
+    )
+    app = create_app(
+        settings,
+        keyring_transport=keyring.transport(),
+        capabilities=NO_SANDBOX,
+        settings_client=fake,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client,
+    ):
+        response = await client.post(
+            "/v1/environments",
+            json={"name": "scratch"},
+            headers=auth_headers(keyring, "alice", "work"),
+        )
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["profile"] == "work"
+        assert body["environment_idle_ttl_seconds"] == settings.environment_idle_ttl_seconds
+        assert body["shell_idle_ttl_seconds"] == settings.shell_idle_ttl_seconds
+
+
+async def test_settings_api_refusing_this_service_is_a_503(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    from settings_client.testing import FakeSettingsClient
+    from structlog.testing import capture_logs
+
+    fake = FakeSettingsClient()
+    fake.rejects["environments"] = (403, "environments-api was not granted environments")
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": SETTINGS_API_TOKEN,
+        }
+    )
+    app = create_app(
+        settings,
+        keyring_transport=keyring.transport(),
+        capabilities=NO_SANDBOX,
+        settings_client=fake,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client,
+    ):
+        with capture_logs() as logs:
+            response = await client.get(
+                "/v1/environments", headers=auth_headers(keyring, "alice", "work")
+            )
+        body = problem(response)
+        assert response.status_code == 503 and body["detail"] == REFUSED
+        assert "granted" not in response.text
+        assert any(entry.get("status_code") == 403 for entry in logs)
+        assert all("granted" not in str(entry) for entry in logs)
+
+
+async def test_a_settings_client_is_not_asked_at_startup_and_is_closed(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.closed = False
+            self.resolves = 0
+
+        async def resolve(self, namespace: str, *, user_token: str) -> Any:
+            self.resolves += 1
+            raise AssertionError("must not fetch settings at startup")
+
+        async def set(self, namespace: str, key: str, value: object, *, user_token: str) -> int:
+            raise AssertionError("must not write settings at startup")
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    recorder = RecordingClient()
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": SETTINGS_API_TOKEN,
+        }
+    )
+    app = create_app(
+        settings,
+        keyring_transport=keyring.transport(),
+        capabilities=NO_SANDBOX,
+        settings_client=recorder,
+    )
+    async with app.router.lifespan_context(app):
+        assert isinstance(app.state.preferences, SettingsApiPreferences)
+        assert recorder.resolves == 0
+    assert recorder.closed
+
+
+async def test_a_bad_token_does_not_ask_settings_api(
+    settings: Settings, keyring: FakeKeyring
+) -> None:
+    from settings_client.testing import FakeSettingsClient
+
+    fake = FakeSettingsClient()
+    settings = settings.model_copy(
+        update={
+            "settings_api_base_url": "https://settings.test",
+            "settings_api_token": SETTINGS_API_TOKEN,
+        }
+    )
+    app = create_app(
+        settings,
+        keyring_transport=keyring.transport(),
+        capabilities=NO_SANDBOX,
+        settings_client=fake,
+    )
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client,
+    ):
+        response = await client.get(
+            "/v1/environments", headers={"Authorization": "Bearer not-a-token"}
+        )
+        assert response.status_code == 401
+        assert fake.resolves == 0

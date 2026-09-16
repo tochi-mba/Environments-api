@@ -12,6 +12,8 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "pyjwt[crypto]>=2.8",
+    "keyring-client",
+    "settings-client",
 ]
 
 [dependency-groups]
@@ -21,7 +23,14 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
     "mypy>=1.10",
+    "import-linter>=2.0",
 ]
+
+# Unreleased, so they come from sibling checkouts: a clone, CI job or image build of this
+# service needs Keyring-api and Settings-api at these paths until the clients are published.
+[tool.uv.sources]
+keyring-client = { path = "../Keyring-api/clients/python", editable = true }
+settings-client = { path = "../Settings-api/clients/python", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -47,6 +56,11 @@ convention = "google"
 [tool.mypy]
 strict = true
 python_version = "3.11"
+# The service only runs on Linux: the sandbox tiers need unshare, setpriv, useradd and
+# /proc. Checking against the Linux stdlib stubs makes `make check` give the same answer
+# on a Windows or macOS workstation as it does in CI, instead of 76 errors about
+# os.killpg and resource.getrlimit that no deployment will ever see.
+platform = "linux"
 warn_unreachable = true
 files = ["app", "tests"]
 
@@ -54,7 +68,7 @@ files = ["app", "tests"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
-filterwarnings = ["error::DeprecationWarning:app"]
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true
@@ -73,3 +87,58 @@ exclude_also = [
     "^\\s*\\.\\.\\.$",
     "if __name__ == \"__main__\":",
 ]
+
+[tool.importlinter]
+root_package = "app"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "The sandbox knows nothing about HTTP"
+type = "forbidden"
+source_modules = ["app.sandbox", "app.shells", "app.processes", "app.procfs", "app.files"]
+forbidden_modules = ["app.api", "app.main", "fastapi"]
+# What isolates a process must be testable, and reviewable, without an HTTP request in
+# sight. A sandbox module that reached for a request object would be one whose rules could
+# change with the shape of a route.
+#
+# Direct imports only: the sandbox raises the domain errors in app.errors, and that module
+# also holds the handlers that render them, so it imports FastAPI. Splitting the errors
+# from their rendering would let this contract be exhaustive, and is worth doing.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Keyring is spoken to from one package"
+type = "forbidden"
+source_modules = [
+    "app.api",
+    "app.environments",
+    "app.sandbox",
+    "app.shells",
+    "app.processes",
+    "app.files",
+    "app.audit",
+    "app.middleware",
+]
+forbidden_modules = ["keyring_client", "jwt"]
+# app.keyring is the one package that talks to keyring, and app.settings validates the
+# service token with keyring's own rule rather than a copy of it that could drift.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Settings-api is spoken to from one module"
+type = "forbidden"
+source_modules = [
+    "app.api",
+    "app.environments",
+    "app.keyring",
+    "app.sandbox",
+    "app.shells",
+    "app.processes",
+    "app.files",
+    "app.audit",
+    "app.middleware",
+]
+forbidden_modules = ["settings_client"]
+# app.preferences is the one module that reads settings-api. A second reader has to be
+# added here on purpose.
+allow_indirect_imports = true

@@ -1,22 +1,55 @@
+"""Keyring: this service's side of believing a token, and credentials as environment variables.
+
+The rules by which a token is believed belong to keyring-client and are tested there. These
+tests pin that this service applies them with its own issuer and audience; that what reaches a
+caller is one refusal or fixed text, never anything a forger or a log reader could learn from;
+and that keyring's answer becomes the variables a command sees. Every token carries a real
+RS256 signature, and nothing about verification is stubbed.
+
+Needs no host capability and no conftest fixture, so it runs on any workstation.
+"""
+
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+import jwt
 import pytest
+from keyring_client import BAD_TOKEN, KEYS_UNAVAILABLE, JwksClient, jwks_url
+from keyring_client import CredentialClient as SharedCredentialClient
+from keyring_client import TokenVerifier as SharedTokenVerifier
+from keyring_client.testing import (
+    EPOCH,
+    ROTATED_KEY,
+    SEALED_DETAIL,
+    FakeClock,
+    forge_hs256,
+    forge_unsigned,
+    mint,
+    private_pem,
+    thumbprint,
+)
+from structlog.testing import capture_logs
 
 from app.errors import KeyringUnavailableError, UnauthorizedError
-from app.keyring.auth import TokenVerifier
-from app.keyring.client import CredentialClient, parse_credential
-from app.keyring.jwks import JWKSCache
-from tests.fake_keyring import AUDIENCE, SERVICE_TOKEN, FakeKeyring, _generate_key
+from app.keyring.auth import Caller, TokenVerifier, presented_token
+from app.keyring.client import UNREACHABLE, CredentialClient, parse_credential
+from tests.fake_keyring import AUDIENCE, BASE_URL, ISSUER, SERVICE_TOKEN, FakeKeyring, credential
 
-JWKS_URL = "http://keyring/.well-known/jwks.json"
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
+INSTANCE = "/v1/environments"
+REFUSAL = {
+    "type": "urn:environments-api:error:unauthorized",
+    "title": "Unauthorized",
+    "status": 401,
+    "detail": BAD_TOKEN,
+    "code": "unauthorized",
+    "instance": INSTANCE,
+}
+LEAKY = "connection refused by https://operator:hunter2@keyring.test"
+"""What an HTTP client's exception says: the URL, userinfo included."""
 
 
 @pytest.fixture
@@ -25,199 +58,350 @@ def keyring() -> FakeKeyring:
 
 
 @pytest.fixture
-def clock() -> Clock:
-    return Clock()
+def clock() -> FakeClock:
+    return FakeClock()
 
 
 @pytest.fixture
-def verifier(keyring: FakeKeyring, clock: Clock) -> TokenVerifier:
-    cache = JWKSCache(keyring.client(), JWKS_URL, ttl_seconds=60, clock=clock)
-    return TokenVerifier(cache, AUDIENCE)
+async def verifier(keyring: FakeKeyring, clock: FakeClock) -> AsyncIterator[TokenVerifier]:
+    jwks = JwksClient(url=jwks_url(BASE_URL), clock=clock, transport=keyring.transport())
+    yield TokenVerifier(SharedTokenVerifier(jwks=jwks, issuer=ISSUER, clock=clock), AUDIENCE)
+    await jwks.aclose()
 
 
-async def test_valid_token_yields_account(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    assert await verifier.verify(keyring.mint("acct-1")) == "acct-1"
-
-
-async def test_expired_token_rejected(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify(keyring.mint("acct-1", ttl=-60))
-    assert info.value.extra["token_error"] == "expired"
-
-
-async def test_wrong_audience_rejected(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify(keyring.mint("acct-1", audience="web-search-api"))
-    assert info.value.extra["token_error"] == "wrong_audience"
-
-
-async def test_forged_signature_rejected(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    forged = keyring.mint("acct-1", key=_generate_key())
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify(forged)
-    assert info.value.extra["token_error"] == "invalid"
-
-
-async def test_alg_none_rejected(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify(keyring.mint("acct-1", algorithm="none"))
-    assert info.value.extra["token_error"] == "invalid"
-
-
-async def test_unknown_kid_rejected(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    token = keyring.mint("acct-1", kid="ghost", key=_generate_key())
-    with pytest.raises(UnauthorizedError) as info:
+async def refusal(verifier: TokenVerifier, token: str) -> dict[str, Any]:
+    with pytest.raises(UnauthorizedError) as caught:
         await verifier.verify(token)
-    assert info.value.extra["token_error"] == "unknown_kid"
+    return caught.value.to_problem(INSTANCE)
 
 
-async def test_missing_kid_and_malformed(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify("not.a.token")
-    assert info.value.extra["token_error"] == "malformed"
-    import jwt
-
-    pem = _pem(keyring)
-    token = jwt.encode({"sub": "x", "aud": AUDIENCE, "exp": 9999999999, "iat": 1}, pem, "RS256")
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify(token)
-    assert info.value.extra["token_error"] == "missing_kid"
+def token_for(**bent: Any) -> str:
+    """A token signed with keyring's key for this service, with the claims in ``bent`` bent."""
+    return mint(**{"audience": AUDIENCE, "issuer": ISSUER, **bent})
 
 
-async def test_missing_sub_rejected(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    import jwt
-
-    payload = {"aud": AUDIENCE, "exp": 9999999999, "iat": 1, "sub": ""}
-    token = jwt.encode(payload, _pem(keyring), "RS256", headers={"kid": keyring.current_kid})
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify(token)
-    assert info.value.extra["token_error"] == "missing_sub"
-    payload["sub"] = 5
-    token = jwt.encode(payload, _pem(keyring), "RS256", headers={"kid": keyring.current_kid})
-    with pytest.raises(UnauthorizedError) as info:
-        await verifier.verify(token)
-    assert info.value.extra["token_error"] == "invalid"
+# ----- believing a token ---------------------------------------------------------------
 
 
-async def test_jwks_rotation_is_picked_up(verifier: TokenVerifier, keyring: FakeKeyring) -> None:
-    assert await verifier.verify(keyring.mint("a")) == "a"
-    old = keyring.mint("a")
-    keyring.rotate("k2")
-    assert await verifier.verify(keyring.mint("a")) == "a"
-    with pytest.raises(UnauthorizedError):
-        await verifier.verify(old)
+async def test_a_valid_token_yields_its_account(
+    verifier: TokenVerifier, keyring: FakeKeyring
+) -> None:
+    assert await verifier.verify(keyring.mint(account_id="acct-1")) == "acct-1"
 
 
-async def test_jwks_cache_respects_ttl(keyring: FakeKeyring, clock: Clock) -> None:
-    cache = JWKSCache(keyring.client(), JWKS_URL, ttl_seconds=60, clock=clock)
-    assert not cache.has_keys
-    await cache.get_key("k1")
-    await cache.get_key("k1")
-    assert len(keyring.requests) == 1
-    clock.now += 61
-    await cache.get_key("k1")
-    assert len(keyring.requests) == 2
-    assert cache.has_keys
+async def test_a_token_from_another_keyring_is_refused(verifier: TokenVerifier) -> None:
+    """A second keyring's signature, however good, does not speak for this deployment."""
+    assert await refusal(verifier, token_for(issuer="https://another-keyring.test")) == REFUSAL
 
 
-async def test_jwks_unreachable_or_broken(keyring: FakeKeyring, clock: Clock) -> None:
-    cache = JWKSCache(keyring.client(), JWKS_URL, ttl_seconds=60, clock=clock)
-    keyring.down = True
+async def test_a_token_minted_for_another_service_is_refused(
+    verifier: TokenVerifier, keyring: FakeKeyring
+) -> None:
+    assert await refusal(verifier, keyring.mint(audience="web-search-api")) == REFUSAL
+
+
+async def test_a_token_without_a_key_id_is_refused_without_asking_keyring(
+    verifier: TokenVerifier, keyring: FakeKeyring
+) -> None:
+    """Choosing a key on the sender's behalf would be doing their search for them."""
+    issued = int(EPOCH.timestamp())
+    claims = {"iss": ISSUER, "sub": "acct-1", "aud": AUDIENCE, "iat": issued, "exp": issued + 60}
+    assert await refusal(verifier, jwt.encode(claims, private_pem(), algorithm="RS256")) == REFUSAL
+    assert keyring.fetches == 0
+
+
+async def test_expiry_is_judged_by_the_injected_clock(
+    verifier: TokenVerifier, clock: FakeClock
+) -> None:
+    """Issued at the fake clock's epoch with an hour to live, so PyJWT's wall clock would
+    have refused it outright; the injected clock accepts it until the hour is up."""
+    token = token_for(ttl_seconds=3600)
+    assert await verifier.verify(token) == "account-a"
+    clock.advance(timedelta(hours=1))
+    assert await refusal(verifier, token) == REFUSAL
+
+
+async def test_every_refusal_is_the_same_problem(
+    verifier: TokenVerifier, keyring: FakeKeyring
+) -> None:
+    """Nothing in the body says which rule refused a token. The log says, to an operator."""
+    tokens = [
+        token_for(issuer="https://another-keyring.test"),
+        keyring.mint(audience="web-search-api"),
+        token_for(issued_at=EPOCH - timedelta(days=1), ttl_seconds=60),
+        token_for(key=ROTATED_KEY, kid=thumbprint()),
+        token_for(omit="sub"),
+        token_for(claims={"sub": ""}),
+        forge_hs256(audience=AUDIENCE, issuer=ISSUER),
+        forge_unsigned(audience=AUDIENCE, issuer=ISSUER),
+        "not-a-jwt",
+    ]
+    problems = [await refusal(verifier, token) for token in tokens]
+    for authorization, legacy in ((None, None), ("Basic dXNlcjpwYXNz", None), ("Bearer a", "b")):
+        with pytest.raises(UnauthorizedError) as caught:
+            presented_token(authorization, legacy)
+        problems.append(caught.value.to_problem(INSTANCE))
+    assert all(problem == REFUSAL for problem in problems)
+
+
+async def test_an_unknown_key_id_after_a_good_fetch_is_refused_and_cannot_flood_keyring(
+    verifier: TokenVerifier, keyring: FakeKeyring, clock: FakeClock
+) -> None:
+    assert await verifier.verify(keyring.mint()) == "account-a"
+    stranger = token_for(key=ROTATED_KEY)
+    assert await refusal(verifier, stranger) == REFUSAL
+    assert keyring.fetches == 2  # one look, in case keyring had rotated
+    for _ in range(20):
+        assert await refusal(verifier, stranger) == REFUSAL
+    assert keyring.fetches == 2  # and no more inside the window, however many arrive
+    keyring.rotate(ROTATED_KEY)
+    clock.advance(61)
+    assert await verifier.verify(stranger) == "account-a"  # a real rotation is still seen
+    assert keyring.fetches == 3
+
+
+async def test_keys_held_are_served_through_an_outage_for_a_bounded_grace(
+    verifier: TokenVerifier, keyring: FakeKeyring, clock: FakeClock
+) -> None:
+    token = keyring.mint()
+    assert await verifier.verify(token) == "account-a"
+    keyring.error = httpx.ConnectError(LEAKY)
+    clock.advance(timedelta(hours=2))  # past the cache, well inside the grace
+    assert await verifier.verify(token) == "account-a"
+    clock.advance(timedelta(days=2))  # past the grace: whether the token is good is unknown
     with pytest.raises(KeyringUnavailableError):
-        await cache.get_key("k1")
-    keyring.down = False
-    keyring.jwks_broken = True
-    with pytest.raises(KeyringUnavailableError):
-        await cache.get_key("k1")
+        await verifier.verify(token)
+
+
+async def test_unreachable_keys_are_503_with_fixed_text(
+    verifier: TokenVerifier, keyring: FakeKeyring
+) -> None:
+    keyring.error = httpx.ConnectError(LEAKY)
+    with pytest.raises(KeyringUnavailableError) as caught:
+        await verifier.verify(keyring.mint())
+    problem = caught.value.to_problem(INSTANCE)
+    assert problem["status"] == 503 and problem["detail"] == KEYS_UNAVAILABLE
+    shown = f"{problem} {caught.value!r}"
+    assert "hunter2" not in shown and "keyring.test" not in shown and "ConnectError" not in shown
+
+
+# ----- which header carries the token ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("authorization", "legacy"),
+    [
+        ("Bearer tok-1", None),
+        ("bearer tok-1", None),
+        ("Bearer tok-1", "tok-1"),
+        ("Bearer tok-1", ""),
+        (None, "tok-1"),
+    ],
+)
+def test_the_token_comes_from_a_bearer_header_or_the_legacy_one(
+    authorization: str | None, legacy: str | None
+) -> None:
+    assert presented_token(authorization, legacy) == "tok-1"
+
+
+def test_the_legacy_header_alone_is_accepted_and_logged_without_the_token() -> None:
+    with capture_logs() as logs:
+        assert presented_token(None, "tok-legacy-1") == "tok-legacy-1"
+        assert presented_token("Bearer tok-legacy-1", "tok-legacy-1") == "tok-legacy-1"
+    assert logs == [
+        {
+            "event": "legacy_user_token_header",
+            "replacement": "Authorization: Bearer",
+            "log_level": "info",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("authorization", "legacy"),
+    [
+        (None, None),
+        (None, ""),
+        ("", None),
+        ("", "tok-1"),
+        ("Bearer", None),
+        ("Bearer ", None),
+        ("Basic dXNlcjpwYXNz", None),
+        ("tok-1", None),
+        ("Bearer tok-1", "tok-2"),
+    ],
+)
+def test_a_missing_malformed_or_contradictory_header_is_the_one_refusal(
+    authorization: str | None, legacy: str | None
+) -> None:
+    with pytest.raises(UnauthorizedError) as caught:
+        presented_token(authorization, legacy)
+    assert caught.value.to_problem(INSTANCE) == REFUSAL
+
+
+def test_a_caller_never_shows_its_token() -> None:
+    caller = Caller("acct-1", "personal", "eyJ-the-callers-token")
+    assert "eyJ-the-callers-token" not in repr(caller) and "acct-1" in repr(caller)
+
+
+# ----- credentials ---------------------------------------------------------------------
 
 
 @pytest.fixture
-def credentials(keyring: FakeKeyring) -> CredentialClient:
-    return CredentialClient(keyring.client(), "http://keyring/", SERVICE_TOKEN)
+async def credentials(keyring: FakeKeyring) -> AsyncIterator[CredentialClient]:
+    shared = SharedCredentialClient(
+        base_url=BASE_URL, service_token=SERVICE_TOKEN, transport=keyring.transport()
+    )
+    client = CredentialClient(shared)
+    yield client
+    await client.aclose()
 
 
-async def test_resolve_credential_shapes(
+async def test_resolve_credential_maps_keyrings_real_response(
     credentials: CredentialClient, keyring: FakeKeyring
 ) -> None:
-    keyring.credentials[("personal", "github")] = {"kind": "api_key", "value": "ghp_secret123"}
-    keyring.credentials[("personal", "npm")] = {
-        "env": {"NPM_TOKEN": "npm_secret", "NPM_REGISTRY": "https://r"}
-    }
-    keyring.credentials[("personal", "basic")] = {"password": "pw123456", "username": "bob"}
-    keyring.credentials[("personal", "odd-name")] = {"token": "tok_abcdef"}
-    token = keyring.mint("a")
+    keyring.connect(
+        account_id="a",
+        profile="personal",
+        service="github",
+        headers={"Authorization": "Bearer ghp_secret123"},
+    )
+    keyring.connect(
+        account_id="a",
+        profile="personal",
+        service="tmdb",
+        headers={},
+        query_params={"api_key": "tmdb_secret"},
+    )
+    keyring.connect(
+        account_id="a",
+        profile="personal",
+        service="odd-name",
+        headers={"X-API-Key": "tok_abcdef"},
+        expires_at=datetime(2026, 9, 15, 12, tzinfo=UTC),
+    )
+    token = keyring.mint(account_id="a")
     github = await credentials.resolve(token, "personal", "github")
     assert github is not None
-    assert github.env == {"GITHUB_TOKEN": "ghp_secret123"}
-    assert github.secrets == ("ghp_secret123",)
-    npm = await credentials.resolve(token, "personal", "npm")
-    assert npm is not None
-    assert npm.env["NPM_TOKEN"] == "npm_secret"
-    assert set(npm.secrets) == {"npm_secret", "https://r"}
-    basic = await credentials.resolve(token, "personal", "basic")
-    assert basic is not None
-    assert basic.env == {"BASIC_TOKEN": "pw123456", "BASIC_USERNAME": "bob"}
+    assert github.env == {
+        "GITHUB_AUTHORIZATION": "Bearer ghp_secret123",
+        "GITHUB_TOKEN": "ghp_secret123",
+    }
+    assert github.secrets == ("Bearer ghp_secret123", "ghp_secret123")
+    tmdb = await credentials.resolve(token, "personal", "tmdb")
+    assert tmdb is not None
+    assert tmdb.env == {"TMDB_API_KEY": "tmdb_secret", "TMDB_TOKEN": "tmdb_secret"}
     odd = await credentials.resolve(token, "personal", "odd-name")
     assert odd is not None
-    assert odd.env == {"ODD_NAME_TOKEN": "tok_abcdef"}
+    assert odd.env == {"ODD_NAME_X_API_KEY": "tok_abcdef", "ODD_NAME_TOKEN": "tok_abcdef"}
     assert await credentials.resolve(token, "personal", "missing") is None
-    request = keyring.requests[-1]
+    request = keyring.internal_calls[-1]
     assert request.headers["Authorization"] == f"Bearer {SERVICE_TOKEN}"
     assert request.headers["X-Keyring-User-Token"] == token
+    # Keyring takes the account from the token, so another account's token finds nothing.
+    assert await credentials.resolve(keyring.mint(account_id="b"), "personal", "github") is None
 
 
-def test_parse_credential_ignores_empty_and_short() -> None:
-    parsed = parse_credential("svc", {"value": "", "token": "abc"})
-    assert parsed.env == {"SVC_TOKEN": "abc"}
+def test_the_bare_token_comes_from_authorization_before_anything_else() -> None:
+    headers = {"X-Trace": "trace-1", "authorization": "token abcd1234"}
+    parsed = parse_credential("svc", credential("svc", headers=headers))
+    assert parsed.env == {
+        "SVC_X_TRACE": "trace-1",
+        "SVC_AUTHORIZATION": "token abcd1234",
+        "SVC_TOKEN": "abcd1234",
+    }
+    bare = parse_credential("svc", credential("svc", headers={"Authorization": "sk-plain-key"}))
+    assert bare.env["SVC_TOKEN"] == "sk-plain-key"
+
+
+def test_no_token_is_guessed_when_it_is_ambiguous_or_absent() -> None:
+    several = credential("svc", headers={"X-Id": "id-1234"}, query_params={"key": "key-5678"})
+    assert parse_credential("svc", several).env == {"SVC_X_ID": "id-1234", "SVC_KEY": "key-5678"}
+    empty: dict[str, Any] = {"service": "svc", "headers": {}, "query_params": None}
+    assert parse_credential("svc", empty).env == {}
+
+
+def test_short_values_are_injected_but_not_redacted() -> None:
+    parsed = parse_credential("svc", credential("svc", headers={"X-Key": "abc"}))
+    assert parsed.env == {"SVC_X_KEY": "abc", "SVC_TOKEN": "abc"}
     assert parsed.secrets == ()
-    assert parse_credential("svc", {"env": {}}).env == {}
 
 
-async def test_resolve_error_mapping(credentials: CredentialClient, keyring: FakeKeyring) -> None:
-    with pytest.raises(UnauthorizedError):
-        await credentials.resolve("rejected", "personal", "github")
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"env": {"GITHUB_TOKEN": "ghp_secret123"}},
+        {"value": "ghp_secret123"},
+        {"headers": "Bearer abcd1234"},
+        {"headers": {"Authorization": 5}},
+        {"headers": {}, "query_params": ["api_key"]},
+    ],
+)
+def test_a_body_keyring_never_sends_is_refused_rather_than_injecting_nothing(
+    body: dict[str, Any],
+) -> None:
+    with pytest.raises(KeyringUnavailableError, match="cannot read"):
+        parse_credential("svc", body)
+
+
+def test_a_resolved_credential_names_its_variables_but_never_shows_them() -> None:
+    headers = {"Authorization": "Bearer ghp_secret123"}
+    parsed = parse_credential("github", credential("github", headers=headers))
+    assert repr(parsed) == (
+        "ResolvedCredential(service='github', env=<GITHUB_AUTHORIZATION,GITHUB_TOKEN>)"
+    )
+
+
+async def test_keyrings_refusals_become_this_services_errors(
+    credentials: CredentialClient, keyring: FakeKeyring
+) -> None:
+    keyring.connect(
+        account_id="a",
+        profile="personal",
+        service="github",
+        headers={"Authorization": "Bearer ghp_secret123"},
+    )
+    token = keyring.mint(account_id="a")
+    # Keyring refuses a user token minted for some other service: the one refusal.
+    foreign = keyring.mint(account_id="a", audience="web-search-api")
+    with pytest.raises(UnauthorizedError) as refused:
+        await credentials.resolve(foreign, "personal", "github")
+    assert refused.value.to_problem(INSTANCE) == REFUSAL
     keyring.sealed = True
-    with pytest.raises(KeyringUnavailableError) as info:
-        await credentials.resolve("tok", "personal", "github")
-    assert "sealed" in info.value.detail
+    with pytest.raises(KeyringUnavailableError) as sealed:
+        await credentials.resolve(token, "personal", "github")
+    assert sealed.value.detail == SEALED_DETAIL  # keyring's own words, because they name the fix
     keyring.sealed = False
-    keyring.down = True
-    with pytest.raises(KeyringUnavailableError) as info:
-        await credentials.resolve("tok", "personal", "github")
-    assert "unreachable" in info.value.detail
-    keyring.down = False
-    keyring.credentials[("personal", "weird")] = {"__status__": 418, "__text__": "teapot"}
-    with pytest.raises(KeyringUnavailableError) as info:
-        await credentials.resolve("tok", "personal", "weird")
-    assert "418" in info.value.detail and "teapot" in info.value.detail
-    keyring.credentials[("personal", "weird")] = {"__status__": 500, "__text__": ""}
-    with pytest.raises(KeyringUnavailableError) as info:
-        await credentials.resolve("tok", "personal", "weird")
-    assert "500" in info.value.detail
-    keyring.credentials[("personal", "weird")] = {"__status__": 502, "__text__": '{"x": 1}'}
-    with pytest.raises(KeyringUnavailableError) as info:
-        await credentials.resolve("tok", "personal", "weird")
-    assert info.value.detail == '{"x": 1}'
+    keyring.error = httpx.ConnectError(LEAKY)
+    with pytest.raises(KeyringUnavailableError) as down:
+        await credentials.resolve(token, "personal", "github")
+    assert down.value.detail == UNREACHABLE
+    shown = " ".join(
+        f"{caught.value.to_problem(INSTANCE)} {caught.value!r}"
+        for caught in (refused, sealed, down)
+    )
+    assert "hunter2" not in shown and SERVICE_TOKEN not in shown and token not in shown
 
 
-async def test_resolve_non_object_body(keyring: FakeKeyring) -> None:
-    import httpx
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[1, 2])
-
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(500, text=f"Traceback: {LEAKY}"),
+        httpx.Response(418, json={"detail": LEAKY}),
+        httpx.Response(200, json=[1, 2]),
+        httpx.Response(200, json={"service": "github", "headers": {"Authorization": 5}}),
+        httpx.Response(200, text="not json"),
+    ],
+)
+async def test_anything_else_keyring_answers_is_503_with_fixed_text(answer: httpx.Response) -> None:
+    transport = httpx.MockTransport(lambda request: answer)
     client = CredentialClient(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler)), "http://k", SERVICE_TOKEN
+        SharedCredentialClient(base_url=BASE_URL, service_token=SERVICE_TOKEN, transport=transport)
     )
-    with pytest.raises(KeyringUnavailableError):
-        await client.resolve("tok", "personal", "github")
-
-
-def _pem(keyring: FakeKeyring) -> bytes:
-    from cryptography.hazmat.primitives import serialization
-
-    return keyring.keys[keyring.current_kid].private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    )
+    try:
+        with pytest.raises(KeyringUnavailableError) as caught:
+            await client.resolve("tok", "personal", "github")
+    finally:
+        await client.aclose()
+    assert caught.value.detail == UNREACHABLE
+    assert "hunter2" not in f"{caught.value.to_problem(INSTANCE)} {caught.value!r}"

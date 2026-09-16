@@ -41,6 +41,7 @@ from app.errors import (
 from app.keyring.auth import Caller
 from app.keyring.client import ResolvedCredential
 from app.paths import relative_to_workspace, resolve_within
+from app.preferences import Preferences
 from app.sandbox import ResourceLimits, Sandbox, SpawnRequest
 from app.settings import Settings
 from app.shells.shell import CommandRecord, Shell, ShellSpec, new_id
@@ -239,8 +240,14 @@ class EnvironmentService:
         credentials: list[str],
         network: bool | None,
         limits: EnvironmentLimits | None,
+        preferences: Preferences | None = None,
     ) -> EnvironmentRecord:
-        """Create an environment under the caller's account and profile."""
+        """Create an environment under the caller's account and profile.
+
+        When settings-api is configured, ``preferences`` is what this create is stamped
+        with: idle TTLs for the reaper (which has no token) and the per-profile cap. When
+        it is not, or ``preferences`` is omitted, today's QuotaStore path is unchanged.
+        """
         quotas = self._quotas.effective(caller.account_id)
         wants_network = self._settings.allow_network if network is None else network
         if wants_network and not self._settings.allow_network:
@@ -250,14 +257,21 @@ class EnvironmentService:
             maximum = int(getattr(quotas, field_name))
             if requested > maximum:
                 raise QuotaExceededError(field_name, requested, maximum)
+        profile_cap = quotas.max_environments_per_profile
+        idle_environment: float | None = None
+        idle_shell: float | None = None
+        if preferences is not None and self._settings.settings_api is not None:
+            profile_cap = min(profile_cap, preferences.max_environments_per_profile)
+            idle_environment = preferences.environment_idle_ttl_seconds
+            idle_shell = preferences.shell_idle_ttl_seconds
         with self._lock:
             mine = [r for r in self._records.values() if r.account_id == caller.account_id]
             in_profile = [r for r in mine if r.profile == caller.profile]
-            if len(in_profile) >= quotas.max_environments_per_profile:
+            if len(in_profile) >= profile_cap:
                 raise QuotaExceededError(
                     "max_environments_per_profile",
                     len(in_profile),
-                    quotas.max_environments_per_profile,
+                    profile_cap,
                 )
             if len(mine) >= quotas.max_environments_per_account:
                 raise QuotaExceededError(
@@ -277,6 +291,8 @@ class EnvironmentService:
                 created_at=now,
                 updated_at=now,
                 last_activity_at=now,
+                environment_idle_ttl_seconds=idle_environment,
+                shell_idle_ttl_seconds=idle_shell,
             )
             self._store.create_dirs(record)
             self._sandbox.prepare(
@@ -714,7 +730,7 @@ class EnvironmentService:
             record = by_env.get(shell.environment_id)
             if record is None or shell.state is not ShellState.RUNNING:
                 continue
-            ttl = quotas_of(record).shell_idle_ttl_seconds
+            ttl = record.shell_idle_ttl(quotas_of(record).shell_idle_ttl_seconds)
             if shell.current is None and now - shell.last_activity > ttl:
                 shell.close(self._settings.shell_close_grace_seconds)
                 self._audit.record(
@@ -728,7 +744,9 @@ class EnvironmentService:
                     continue
                 live = self._live_shells(record.id)
                 last = max([record.last_activity_at, *(s.last_activity for s in live)])
-                idle = not live and now - last > quotas.environment_idle_ttl_seconds
+                idle = not live and now - last > record.environment_idle_ttl(
+                    quotas.environment_idle_ttl_seconds
+                )
                 if record.state is EnvironmentState.ACTIVE and idle:
                     self._archive(record, now)
                     report.environments_archived += 1

@@ -24,7 +24,9 @@ make check   # ruff format --check, ruff check, mypy --strict, pytest with the 1
 | Quotas | `test_service.py`, `test_api.py` | Every limit returns 409 naming itself; disk quota refuses new work |
 | Sandbox | `test_sandbox.py`, `test_child_setup.py` | Each tier for real (skipped with a reason when the host cannot), the detector against the host, rlimits and tty setup in forked children |
 | Redaction | `test_shell.py`, `test_api.py` | `echo $TOKEN` never reaches the buffer or the log; split across chunks |
-| Keyring | `test_keyring.py` | Valid, expired, wrong audience, forged signature, `alg: none`, unknown kid, rotation, against real RS256 keys |
+| Keyring | `test_keyring.py`, `test_api.py` | Issuer, audience, expiry by the injected clock, forged, HS256 and unsigned tokens, no kid, an unknown kid after a good fetch (401, and no flood of fetches), keys served stale through an outage, unreachable keys (503, fixed text), every refusal the same body; `Authorization: Bearer`, the legacy header and a mismatch; keyring's credential answers as variables and as errors |
+| Settings | `test_settings.py` | Unknown `ENVAPI_` variables named without their values; the service token in no repr, dump or error; `.env.example` loads; settings-api is off unless both URL and token are set |
+| Preferences | `test_preferences.py` | Per-person idle TTLs and the per-profile cap clamped to the deployment; `default_profile` refused during an outage unless the request named a profile; idle TTLs stamped on the record at create; 503 with fixed text when settings-api rejects this service |
 | Isolation | `test_service.py`, `test_api.py` | Account A cannot see, poll, signal or delete account B's environment, through every route |
 | Concurrency | `test_shell.py`, `test_api.py` | Second exec on a busy shell → 409; parallel shells do not interfere |
 | Restart | `test_service.py`, `test_api.py` | Shells return dead with a reason, environments intact, commands retrievable from logs |
@@ -33,9 +35,15 @@ make check   # ruff format --check, ruff check, mypy --strict, pytest with the 1
 
 * Dependencies come through `app/api/deps.py`; tests override with
   `app.dependency_overrides`, never by monkeypatching internals. `create_app()` takes the
-  settings, an `httpx.AsyncClient` (wired to `tests/fake_keyring.py`) and host capabilities.
-* `tests/fake_keyring.py` mints real tokens with a generated RSA key and serves the JWKS
-  and credentials endpoints through `httpx.MockTransport`.
+  settings, a keyring transport (`FakeKeyring().transport()`), a clock, host capabilities,
+  and an optional settings-api client.
+* `tests/fake_keyring.py` points `keyring_client.testing.FakeKeyring`, the fake the whole
+  family shares, at this service: real RS256 tokens, a real JWKS document, and keyring's
+  internal endpoint refusing what keyring refuses, served through `httpx.MockTransport`.
+* `test_keyring.py`, `test_settings.py`, `test_shell_units.py` and `test_preferences.py`
+  need no host capability, so `uv run pytest --noconftest tests/test_keyring.py
+  tests/test_settings.py tests/test_shell_units.py tests/test_preferences.py` runs them on
+  any workstation, Windows included.
 * Gate on events (`wait_command`, `wait_output`, `wait_exit`) and bounded polls of
   `/proc`; never `sleep` to wait for a process.
 
