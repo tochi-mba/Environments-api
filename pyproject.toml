@@ -3,7 +3,7 @@ name = "environments-api"
 version = "0.1.0"
 description = "Sandboxed environments and shells, as an API."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -40,7 +40,7 @@ packages = ["app"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "W", "SIM", "RUF", "D"]
@@ -54,7 +54,7 @@ convention = "google"
 
 [tool.mypy]
 strict = true
-python_version = "3.11"
+python_version = "3.12"
 # The service only runs on Linux: the sandbox tiers need unshare, setpriv, useradd and
 # /proc. Checking against the Linux stdlib stubs makes `make check` give the same answer
 # on a Windows or macOS workstation as it does in CI, instead of 76 errors about

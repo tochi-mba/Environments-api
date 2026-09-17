@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # util-linux: unshare and setpriv (namespace tier); passwd: useradd/userdel (user tier);
 # procps is convenient for debugging inside the container.
