@@ -57,7 +57,7 @@ def test_create_layout_and_views(service: EnvironmentService, settings: Settings
     assert oct((env_dir / "environment.json").stat().st_mode & 0o777) == "0o600"
     view = service.environment_view(record)
     assert view["sandbox_tier"] == "directory" and view["shells_running"] == 0
-    assert view["workspace"] == str(env_dir / "workspace")
+    assert "workspace" not in view
     assert service.get(ALICE, record.id) is record
     assert [r.id for r in service.list_environments(ALICE)] == [record.id]
     assert service.list_environments(ALICE, label="team=a") and not service.list_environments(

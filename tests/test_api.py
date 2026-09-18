@@ -410,6 +410,79 @@ async def test_files(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
     assert {e["name"]: e["kind"] for e in response.json()["entries"]}["etc-link"] == "symlink"
 
 
+async def test_safe_file_edit_search_transfer_and_delete_api(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    alice = auth_headers(keyring, "alice")
+    environment = await create_env(client, alice)
+    prefix = f"/v1/environments/{environment['id']}/files"
+
+    written = await client.put(
+        f"{prefix}/content",
+        json={"path": "src/note.txt", "content": "hello world\n"},
+        headers=alice,
+    )
+    etag = written.headers["etag"]
+    assert written.json()["etag"] == etag
+
+    edited = await client.post(
+        f"{prefix}/edit",
+        json={"path": "src/note.txt", "old_string": "hello", "new_string": "hi"},
+        headers={**alice, "If-Match": etag},
+    )
+    assert edited.status_code == 200
+    assert "-hello world" in edited.json()["diff"]
+    assert "+hi world" in edited.json()["diff"]
+    stale = await client.post(
+        f"{prefix}/edit",
+        json={"path": "src/note.txt", "old_string": "hi", "new_string": "no"},
+        headers={**alice, "If-Match": etag},
+    )
+    assert stale.status_code == 412 and problem(stale)["code"] == "file_changed"
+
+    patched = await client.post(
+        f"{prefix}/patch",
+        json={
+            "path": "src/note.txt",
+            "patch": "@@ -1 +1 @@\n-hi world\n+bye world\n",
+        },
+        headers={**alice, "If-Match": edited.headers["etag"]},
+    )
+    assert patched.json()["applied_hunks"] == [1]
+    searched = await client.get(
+        f"{prefix}/search",
+        params={"pattern": "bye", "path": "src", "mode": "content"},
+        headers=alice,
+    )
+    assert searched.json()["matches"][0]["lines"][0]["text"] == "bye world"
+
+    copied = await client.post(
+        f"{prefix}/copy",
+        json={"source": "src/note.txt", "destination": "copy.txt"},
+        headers=alice,
+    )
+    assert copied.json()["path"] == "copy.txt"
+    moved = await client.post(
+        f"{prefix}/move",
+        json={"source": "copy.txt", "destination": "archive/note.txt"},
+        headers=alice,
+    )
+    assert moved.json()["path"] == "archive/note.txt"
+    directory = await client.post(
+        f"{prefix}/directories", json={"path": "empty/nested"}, headers=alice
+    )
+    assert directory.json()["path"] == "empty/nested"
+
+    deleted = await client.delete(
+        f"{prefix}/content", params={"path": "archive/note.txt"}, headers=alice
+    )
+    assert deleted.json()["path"] == "archive/note.txt"
+    missing = await client.get(
+        f"{prefix}/content", params={"path": "archive/note.txt"}, headers=alice
+    )
+    assert missing.status_code == 404
+
+
 async def test_exec_once(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
     alice = auth_headers(keyring, "alice")
     keyring.connect(

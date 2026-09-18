@@ -128,6 +128,14 @@ class ValidationError(DomainError):
     title = "Validation error"
 
 
+class PreconditionError(DomainError):
+    """A file changed after the caller read its ETag."""
+
+    status = 412
+    code = "file_changed"
+    title = "File changed"
+
+
 class PathEscapeError(DomainError):
     """A file path resolved to somewhere outside the workspace."""
 

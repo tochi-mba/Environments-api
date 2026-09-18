@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -71,7 +71,7 @@ def create_app(
     preferences = build_preference_source(settings, client=settings_client)
 
     @contextlib.asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         caps = capabilities or probe_host()
         sandbox = build_sandbox(caps, settings.min_tier)
         store = EnvironmentStore(settings.root)

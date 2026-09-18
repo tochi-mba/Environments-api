@@ -48,7 +48,7 @@ expect "legacy header" "$(curl -s -o /dev/null -w '%{http_code}' "$ENVAPI_URL/v1
 step "create environment"
 ENV_JSON=$(api POST /v1/environments '{"name":"smoke","credentials":["github"],"labels":{"suite":"smoke"}}')
 EID=$(echo "$ENV_JSON" | j 'd["id"]')
-echo "$ENV_JSON" | j '"id=" + d["id"] + " tier=" + d["sandbox_tier"] + " workspace=" + d["workspace"]'
+echo "$ENV_JSON" | j '"id=" + d["id"] + " tier=" + d["sandbox_tier"]'
 
 step "open shell, echo hello"
 SID=$(api POST "/v1/environments/$EID/shells" '{}' | j 'd["id"]')

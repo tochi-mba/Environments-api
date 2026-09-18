@@ -349,7 +349,6 @@ class EnvironmentService:
             data = record.model_dump(mode="json")
         data["shells"] = [s.model_dump(mode="json") for s in record.shells]
         data["shells_running"] = len(live)
-        data["workspace"] = str(self._store.workspace(record))
         data["disk_bytes"] = self._usage.get(record.id)
         return data
 

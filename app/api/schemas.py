@@ -120,6 +120,34 @@ class WriteFileRequest(BaseModel):
     mode: Literal["overwrite", "append"] = "overwrite"
 
 
+class EditFileRequest(BaseModel):
+    """Replace one exact occurrence in a UTF-8 file."""
+
+    path: str = Field(min_length=1)
+    old_string: str = Field(min_length=1)
+    new_string: str
+
+
+class PatchFileRequest(BaseModel):
+    """Apply a unified diff to one named file."""
+
+    path: str = Field(min_length=1)
+    patch: str = Field(min_length=1)
+
+
+class DirectoryRequest(BaseModel):
+    """Create one directory and its missing parents."""
+
+    path: str = Field(min_length=1)
+
+
+class TransferFileRequest(BaseModel):
+    """Copy or move one regular file without overwriting its destination."""
+
+    source: str = Field(min_length=1)
+    destination: str = Field(min_length=1)
+
+
 class ExecOnceRequest(BaseModel):
     """``POST /v1/exec``: open an ephemeral shell, run, return, close."""
 
