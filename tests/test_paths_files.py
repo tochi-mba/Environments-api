@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -100,14 +101,20 @@ def test_list_dir(workspace: Path, files: FileService) -> None:
 def test_list_dir_skips_vanishing_entries(
     workspace: Path, files: FileService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = Path.lstat
+    """An entry that disappears between listing and stat is skipped, not a 500.
 
-    def flaky(self: Path) -> os.stat_result:
-        if self.name == "sub":
+    The listing works from a directory descriptor with ``os.stat(name, dir_fd=...)``, so
+    that is what vanishes here. Patching ``Path.lstat`` would prove nothing: the listing
+    never calls it, and the test would pass or fail on what the descriptor happened to see.
+    """
+    original = os.stat
+
+    def flaky(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if path == "sub":
             raise OSError("gone")
-        return original(self)
+        return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "lstat", flaky)
+    monkeypatch.setattr(os, "stat", flaky)
     assert "sub" not in {e.name for e in files.list_dir(workspace, ".")}
 
 
