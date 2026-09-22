@@ -20,14 +20,16 @@ def relative_path(workspace: Path, requested: str) -> str:
     """Canonicalise separators and reject aliases through links before resolving."""
     requested = unquote(requested).replace("\\", "/")
     root = workspace.resolve()
-    candidate = Path(requested) if Path(requested).is_absolute() else root / requested
     resolved = resolve_within(root, requested)
     # Inspect the spelling too: resolving first must not turn an in-root symlink into
-    # permission to follow it. Descriptor walks repeat this check without a race.
-    for part in (candidate, *candidate.parents):
-        if part == root:
-            break
-        if part.is_symlink():
+    # permission to follow it. Descriptor walks repeat this check without a race. The walk
+    # goes down from the root over the spelled parts, so a link anywhere in them is found
+    # and there is no way out of the loop except the end of the spelling.
+    candidate = Path(requested) if Path(requested).is_absolute() else root / requested
+    probe = root
+    for name in candidate.relative_to(root).parts:
+        probe = probe / name
+        if probe.is_symlink():
             raise PathEscapeError("File operations do not follow symbolic links")
     return relative_to_workspace(root, resolved)
 

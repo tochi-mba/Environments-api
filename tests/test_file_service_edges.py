@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -20,9 +21,13 @@ from app.errors import (
     PreconditionError,
     ValidationError,
 )
-from app.file_safety import parent_fd, relative_path
-from app.file_search import search
+from app.file_safety import check_match, open_file, parent_fd, relative_path
+from app.file_search import SearchResult, search
 from app.files import FileService
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+    from typing import BinaryIO
 
 
 @pytest.fixture
@@ -218,9 +223,6 @@ class TestWriting:
         self, workspace: Path, files: FileService, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Between reading the validator and replacing the file, something else wrote it."""
-        import app.files as module
-
-        original = module.check_match
         calls = {"n": 0}
 
         def racing(expected: str | None, actual: str | None) -> None:
@@ -228,10 +230,10 @@ class TestWriting:
             if calls["n"] == 2:
                 (workspace / "race.txt").write_text("someone else")
                 raise PreconditionError("changed underneath")
-            original(expected, actual)
+            check_match(expected, actual)
 
         (workspace / "race.txt").write_text("mine")
-        monkeypatch.setattr(module, "check_match", racing)
+        monkeypatch.setattr("app.files.check_match", racing)
         with pytest.raises(PreconditionError):
             files.write_result(workspace, "race.txt", "new", "utf-8", "overwrite", owner=None)
         assert (workspace / "race.txt").read_text() == "someone else"
@@ -311,6 +313,16 @@ class TestMutations:
         assert (workspace / "archive" / "deep" / "note.txt").read_text() == "alpha\nbeta\ngamma\n"
         assert not (workspace / "docs" / "note.txt").exists()
 
+    def test_a_transfer_gives_the_copy_to_the_workspace_owner(
+        self, workspace: Path, files: FileService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sandbox user, not the service, must own what the service writes for it."""
+        owned: list[tuple[int, int]] = []
+        monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: owned.append((uid, gid)))
+        monkeypatch.setattr(os, "chown", lambda *args, **kwargs: None)
+        files.transfer(workspace, "docs/note.txt", "out/copy.txt", move=False, owner=(1000, 1000))
+        assert owned == [(1000, 1000)]
+
     def test_transfer_from_a_directory_is_refused(
         self, workspace: Path, files: FileService
     ) -> None:
@@ -323,8 +335,8 @@ class TestMutations:
 # --------------------------------------------------------------------------------------
 
 
-def run_search(files: FileService, workspace: Path, pattern: str, **overrides: object):
-    options = {
+def run_search(files: FileService, workspace: Path, pattern: str, **overrides: Any) -> SearchResult:
+    options: dict[str, Any] = {
         "path": ".",
         "glob": None,
         "depth": 5,
@@ -335,7 +347,7 @@ def run_search(files: FileService, workspace: Path, pattern: str, **overrides: o
         "max_file_bytes": 1024,
     }
     options.update(overrides)
-    return search(files, workspace, pattern=pattern, **options)  # type: ignore[arg-type]
+    return search(files, workspace, pattern=pattern, **options)
 
 
 class TestSearch:
@@ -383,7 +395,7 @@ class TestSearch:
         self, workspace: Path, files: FileService
     ) -> None:
         (workspace / "long.txt").write_text("beta" + "x" * 3000 + "\n")
-        result = run_search(files, workspace, "beta", glob="long.txt")
+        result = run_search(files, workspace, "beta", glob="long.txt", max_file_bytes=10_000)
         (line,) = result.matches[0].lines
         assert len(line.text) == 2000
         assert line.original_chars == 3004
@@ -391,16 +403,12 @@ class TestSearch:
     def test_a_file_that_vanishes_mid_search_is_named_not_fatal(
         self, workspace: Path, files: FileService, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import app.file_search as module
-
-        original = module.open_file
-
-        def vanishing(descriptor: int, name: str):
+        def vanishing(descriptor: int, name: str) -> AbstractContextManager[BinaryIO]:
             if name == "other.txt":
                 raise NotFoundError("gone")
-            return original(descriptor, name)
+            return open_file(descriptor, name)
 
-        monkeypatch.setattr(module, "open_file", vanishing)
+        monkeypatch.setattr("app.file_search.open_file", vanishing)
         result = run_search(files, workspace, "nothing")
         assert result.skipped_unavailable == ["docs/other.txt"]
         assert result.matches == []
