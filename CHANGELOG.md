@@ -82,6 +82,12 @@ All notable changes to this service are recorded here. The format follows
   settings from settings-api; idle TTLs are stamped on the record so the reaper can honour
   them without a user token. `common.default_profile` replaces `ENVAPI_DEFAULT_PROFILE`
   when a request names no profile, and is refused rather than guessed during an outage.
+- `output_window` on `POST /v1/exec`: `head` (the default, and the old behaviour) or `tail`,
+  which returns the last `max_output_bytes` of the output instead of the first.
+- `output_truncated_bytes` on command results from `POST /v1/exec` and
+  `POST /v1/shells/{sid}/exec`: the output bytes the `max_output_bytes` cap left out.
+  `output_dropped_bytes` still counts only ring-buffer evictions, and before this the cap's
+  cut could only be worked out from `output_end` and `output_cursor`.
 
 ### Fixed
 

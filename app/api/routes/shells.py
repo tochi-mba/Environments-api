@@ -34,16 +34,17 @@ async def resolve_credentials(
     return resolved, missing
 
 
-def command_result(shell: Shell, record: CommandRecord, max_bytes: int) -> dict[str, Any]:
-    """A command with the output it produced so far."""
+def command_result(
+    shell: Shell, record: CommandRecord, max_bytes: int, *, tail: bool = False
+) -> dict[str, Any]:
+    """A command with the output it produced so far: its first ``max_bytes``, or its last."""
     end = record.output_end if record.output_end is not None else shell.cursor
-    chunk = shell.read_output(
-        record.output_start, max(0, min(end - record.output_start, max_bytes))
-    )
+    chunk = shell.read_span(record.output_start, end, max_bytes, tail=tail)
     return {
         **record.to_dict(),
         "output": chunk.data.decode("utf-8", "replace"),
         "output_dropped_bytes": chunk.dropped_bytes,
+        "output_truncated_bytes": chunk.truncated_bytes,
         "output_cursor": chunk.next_cursor,
         "shell_state": shell.state.value,
     }

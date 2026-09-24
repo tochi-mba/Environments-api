@@ -35,6 +35,62 @@ def test_ring_buffer_large_append_evicts_everything_old() -> None:
     assert buf.read(0, 10).dropped_bytes == 6
 
 
+def test_a_span_that_fits_comes_back_whole_from_either_end() -> None:
+    buf = RingBuffer(64)
+    buf.append(b"before|build ok\n")
+    for tail in (False, True):
+        chunk = buf.read_span(7, 16, 100, tail=tail)
+        assert chunk.data == b"build ok\n" and chunk.cursor == 7 and chunk.next_cursor == 16
+        assert chunk.truncated_bytes == 0 and chunk.dropped_bytes == 0
+
+
+def test_a_tail_read_keeps_the_verdict_and_counts_the_head_it_cut() -> None:
+    """The bug, named: a long command's output came back as its first bytes only.
+
+    ``POST /v1/exec`` read ``max_output_bytes`` from the start of the command, and the hub
+    asks for 64 KiB, so the end of a test run or a build log -- where the verdict is -- never
+    reached it. What was cut was counted nowhere; only the ring buffer's evictions were, so
+    the model was told a small number of bytes were omitted when most of the output was.
+    """
+    buf = RingBuffer(64)
+    buf.append(b"collected 3 items\n...\n1 failed, 2 passed\n")
+    tail = buf.read_span(0, 41, 20, tail=True)
+    assert tail.data == b"\n1 failed, 2 passed\n" and tail.next_cursor == 41
+    assert tail.truncated_bytes == 21 and tail.dropped_bytes == 0
+    head = buf.read_span(0, 41, 20)
+    assert head.data == b"collected 3 items\n.." and head.cursor == 0
+    assert head.truncated_bytes == 21 and head.dropped_bytes == 0
+
+
+def test_eviction_and_the_cap_are_counted_apart_and_add_up_to_the_span() -> None:
+    buf = RingBuffer(8)
+    buf.append(b"0123456789abcdef")  # 16 bytes written, "89abcdef" still held
+    tail = buf.read_span(0, 16, 10, tail=True)
+    assert tail.data == b"89abcdef" and tail.dropped_bytes == 2 and tail.truncated_bytes == 6
+    head = buf.read_span(0, 16, 10)
+    assert head.data == b"89abcdef" and head.dropped_bytes == 8 and head.truncated_bytes == 0
+    for chunk in (tail, head):
+        assert chunk.truncated_bytes + chunk.dropped_bytes + len(chunk.data) == 16
+
+
+def test_a_head_read_that_eviction_pushed_past_its_span_cuts_nothing() -> None:
+    """A running command's span ends where the output was when it was asked for.
+
+    If more arrives and evicts the head before the read, the read starts later and runs past
+    that end. What it returned beyond the span was not cut, so it must not count as negative.
+    """
+    buf = RingBuffer(8)
+    buf.append(b"0123456789")
+    chunk = buf.read_span(0, 6, 6)
+    assert chunk.data == b"234567" and chunk.dropped_bytes == 2 and chunk.truncated_bytes == 0
+
+
+def test_a_cursor_read_has_no_span_to_cut() -> None:
+    buf = RingBuffer(8)
+    buf.append(b"abcdef")
+    assert buf.read(0, 2).truncated_bytes == 0
+
+
 def test_exec_script_shapes() -> None:
     nonce = new_nonce()
     assert len(nonce) == 32

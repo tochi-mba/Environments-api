@@ -548,6 +548,46 @@ async def test_exec_once_echoes_the_command_it_was_sent_not_the_subshell_around_
     assert [e["command"] for e in ran] == ["( echo hi; exit 3\n)"]
 
 
+async def test_exec_once_returns_the_end_of_a_long_output_on_request_and_counts_the_cut(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    """The bug, named: everything after the first ``max_output_bytes`` was dropped uncounted.
+
+    The hub asks for 64 KiB (``DEFAULT_OUTPUT_BYTES`` in LUCY-assistant's
+    ``src/lucy_api/clients/environments.py``) and reads only ``output`` and
+    ``output_dropped_bytes``, which counts ring-buffer evictions and nothing else. A long
+    test run came back as its first 64 KiB, without the summary line, and the model was
+    told almost nothing had been omitted. The default stays the head, so no caller changes.
+    """
+    alice = auth_headers(keyring, "alice")
+    env = await create_env(client, alice)
+    printed = "".join(f"{n}\n" for n in range(1, 301))
+    request = {"environment_id": env["id"], "command": "seq 1 300", "max_output_bytes": 100}
+
+    tail = await client.post("/v1/exec", json={**request, "output_window": "tail"}, headers=alice)
+    body = tail.json()
+    assert body["output"] == printed[-100:]
+    assert body["output_truncated_bytes"] == len(printed) - 100
+    assert body["output_dropped_bytes"] == 0
+
+    head = await client.post("/v1/exec", json=request, headers=alice)
+    body = head.json()
+    assert body["output"] == printed[:100]
+    assert body["output_truncated_bytes"] == len(printed) - 100
+
+    whole = await client.post(
+        "/v1/exec",
+        json={**request, "max_output_bytes": 4096, "output_window": "tail"},
+        headers=alice,
+    )
+    assert whole.json()["output"] == printed and whole.json()["output_truncated_bytes"] == 0
+
+    middle = await client.post(
+        "/v1/exec", json={**request, "output_window": "middle"}, headers=alice
+    )
+    assert middle.status_code == 422
+
+
 async def test_admin_routes(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
     alice = auth_headers(keyring, "alice")
     ops = auth_headers(keyring, "ops")
