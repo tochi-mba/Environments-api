@@ -520,6 +520,34 @@ async def test_exec_once(client: httpx.AsyncClient, keyring: FakeKeyring) -> Non
     assert response.status_code == 503 and "sealed" in problem(response)["detail"]
 
 
+async def test_exec_once_echoes_the_command_it_was_sent_not_the_subshell_around_it(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    """The bug, named: ``POST /v1/exec`` answered ``"command": "( ls -la\\n)"``.
+
+    The route wraps the caller's command in a subshell so that ``exit N`` cannot take the
+    ephemeral shell down with it, and the record it echoed was the wrapped string. The hub
+    prefers that echo to its own copy (``src/lucy_api/clients/environments.py:408`` in
+    LUCY-assistant), so the model was shown a command it never wrote. The audit log still
+    records what the shell actually ran.
+    """
+    alice = auth_headers(keyring, "alice")
+    env = await create_env(client, alice)
+    response = await client.post(
+        "/v1/exec",
+        json={"environment_id": env["id"], "command": "echo hi; exit 3"},
+        headers=alice,
+    )
+    body = response.json()
+    assert body["command"] == "echo hi; exit 3"
+    assert body["exit_code"] == 3 and body["output"] == "hi\n"
+    audit = await client.get(
+        "/v1/admin/audit", params={"account_id": "alice"}, headers=auth_headers(keyring, "ops")
+    )
+    ran = [e for e in audit.json()["events"] if e["action"] == "shell.exec"]
+    assert [e["command"] for e in ran] == ["( echo hi; exit 3\n)"]
+
+
 async def test_admin_routes(client: httpx.AsyncClient, keyring: FakeKeyring) -> None:
     alice = auth_headers(keyring, "alice")
     ops = auth_headers(keyring, "ops")

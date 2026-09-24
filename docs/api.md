@@ -104,6 +104,8 @@ outside the workspace is 400 `path_outside_workspace`.
 `POST /v1/exec` `{environment_id, command, timeout_ms, cwd, env, pty, max_output_bytes}`
 opens an ephemeral shell, runs the command in a subshell, waits, returns output and exit
 code, and closes the shell whatever happened. The single most useful shape for an MCP tool.
+`command` in the response is the command as sent; the subshell around it appears only in
+the audit log, which records what the shell ran.
 
 ## Admin (`ENVAPI_OPERATOR_ACCOUNTS` only)
 
