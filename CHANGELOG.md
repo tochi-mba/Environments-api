@@ -82,3 +82,8 @@ All notable changes to this service are recorded here. The format follows
   settings from settings-api; idle TTLs are stamped on the record so the reaper can honour
   them without a user token. `common.default_profile` replaces `ENVAPI_DEFAULT_PROFILE`
   when a request names no profile, and is refused rather than guessed during an outage.
+
+### Fixed
+
+- `POST /v1/exec` echoes `command` as the caller sent it. It echoed the subshell the route
+  wraps it in, `( <command>\n)`, which a model was then shown as the command it had run.

@@ -34,6 +34,9 @@ async def exec_once(
         result = command_result(shell, command, body.max_output_bytes)
     finally:
         await asyncio.to_thread(service.close_shell, caller, shell.id)
+    # The subshell is this route's detail, not the caller's command; the audit log keeps
+    # the wrapped form because that is what the shell ran.
+    result["command"] = body.command
     result["shell_state"] = shell.state.value
     result["credentials_injected"] = [c.service for c in resolved]
     result["credentials_missing"] = missing
