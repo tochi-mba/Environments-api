@@ -149,7 +149,12 @@ class TransferFileRequest(BaseModel):
 
 
 class ExecOnceRequest(BaseModel):
-    """``POST /v1/exec``: open an ephemeral shell, run, return, close."""
+    """``POST /v1/exec``: open an ephemeral shell, run, return, close.
+
+    ``output_window`` says which end of the output ``max_output_bytes`` keeps: ``head``, the
+    default and all there used to be, or ``tail``, where a test run or a build prints its
+    verdict.
+    """
 
     environment_id: str
     command: str = Field(min_length=1)
@@ -158,6 +163,7 @@ class ExecOnceRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     pty: bool = False
     max_output_bytes: int = Field(default=256 * 1024, ge=1, le=8 * 1024 * 1024)
+    output_window: Literal["head", "tail"] = "head"
 
 
 class QuotaOverridesRequest(BaseModel):

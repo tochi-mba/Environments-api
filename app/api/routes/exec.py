@@ -18,7 +18,13 @@ router = APIRouter(prefix="/v1", tags=["exec"])
 async def exec_once(
     body: ExecOnceRequest, caller: CallerDep, service: ServiceDep, credentials: CredentialsDep
 ) -> dict[str, Any]:
-    """Run one command in a fresh shell and close it afterwards, whatever happened."""
+    """Run one command in a fresh shell and close it afterwards, whatever happened.
+
+    At most ``max_output_bytes`` of output come back: the first, or with
+    ``output_window: "tail"`` the last. ``output_truncated_bytes`` counts what that cap left
+    out and ``output_dropped_bytes`` what the ring buffer had already let go, so between them
+    they account for every byte of the command's output that the read did not return.
+    """
     record = service.get(caller, body.environment_id)
     resolved, missing = await resolve_credentials(record, caller, credentials)
     shell = await asyncio.to_thread(
@@ -31,7 +37,9 @@ async def exec_once(
             service.exec, caller, shell.id, f"( {body.command}\n)", body.timeout_ms, resolved
         )
         await asyncio.to_thread(shell.wait_command, command, body.timeout_ms / 1000 + 5)
-        result = command_result(shell, command, body.max_output_bytes)
+        result = command_result(
+            shell, command, body.max_output_bytes, tail=body.output_window == "tail"
+        )
     finally:
         await asyncio.to_thread(service.close_shell, caller, shell.id)
     # The subshell is this route's detail, not the caller's command; the audit log keeps

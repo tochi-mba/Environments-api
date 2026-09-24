@@ -451,6 +451,10 @@ class Shell:
         """Output from ``cursor``; see :class:`RingBuffer`."""
         return self._buffer.read(cursor, max_bytes)
 
+    def read_span(self, start: int, end: int, max_bytes: int, *, tail: bool = False) -> OutputChunk:
+        """At most ``max_bytes`` of ``[start, end)``; see :meth:`RingBuffer.read_span`."""
+        return self._buffer.read_span(start, end, max_bytes, tail=tail)
+
     def wait_output(self, cursor: int, timeout: float) -> bool:
         """Block until there is output past ``cursor``, the command ends, or the shell exits."""
         with self._cond:

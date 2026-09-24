@@ -58,7 +58,9 @@ deployment has `ENVAPI_ALLOW_NETWORK=false`.
 
 `exec` returns immediately with the command record. With `wait_ms` it blocks up to that
 long and, if the command finished, the same response carries `output`, `exit_code` and
-`state: "exited"`; otherwise `state: "running"` and the caller polls. `timeout_ms` is a
+`state: "exited"`; otherwise `state: "running"` and the caller polls. `output` is the start
+of the command's output; `output_truncated_bytes` counts what its cap left out and
+`output_dropped_bytes` what the ring buffer had already evicted. `timeout_ms` is a
 hard deadline: on expiry the command's processes are SIGKILLed and the state becomes
 `timed_out`; if nothing below the shell could be killed (a builtin loop), the shell itself
 is killed a second later.
@@ -101,11 +103,18 @@ outside the workspace is 400 `path_outside_workspace`.
 
 ## Convenience
 
-`POST /v1/exec` `{environment_id, command, timeout_ms, cwd, env, pty, max_output_bytes}`
+`POST /v1/exec`
+`{environment_id, command, timeout_ms, cwd, env, pty, max_output_bytes, output_window}`
 opens an ephemeral shell, runs the command in a subshell, waits, returns output and exit
 code, and closes the shell whatever happened. The single most useful shape for an MCP tool.
 `command` in the response is the command as sent; the subshell around it appears only in
 the audit log, which records what the shell ran.
+
+At most `max_output_bytes` of output come back. `output_window` says which end: `head`
+(the default) keeps the first bytes, `tail` the last, which is where a test run or a build
+prints its verdict. `output_truncated_bytes` counts the bytes that cap left out and
+`output_dropped_bytes` those the ring buffer had already evicted; with the bytes in `output`
+they account for every byte the command wrote before the read.
 
 ## Admin (`ENVAPI_OPERATOR_ACCOUNTS` only)
 
