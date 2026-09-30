@@ -91,5 +91,9 @@ All notable changes to this service are recorded here. The format follows
 
 ### Fixed
 
+- A path no route serves (404) and a method a route does not take (405) are
+  `application/problem+json` with `code` `not_found` and `method_not_allowed`, like every
+  other error. They were FastAPI's plain `{"detail": ...}` JSON. The 405 keeps its `Allow`
+  header.
 - `POST /v1/exec` echoes `command` as the caller sent it. It echoed the subshell the route
   wraps it in, `( <command>\n)`, which a model was then shown as the command it had run.

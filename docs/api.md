@@ -188,7 +188,8 @@ they account for every byte the command wrote before the read.
 |---|---|---|
 | `unauthorized` | 401 | Any token refusal, or a missing or wrong `X-API-Key` |
 | `forbidden` | 403 | `/v1/admin` for an account not in `ENVAPI_OPERATOR_ACCOUNTS` |
-| `not_found` | 404 | Anything the caller does not own, or that does not exist |
+| `not_found` | 404 | Anything the caller does not own, or that does not exist, including a path no route serves |
+| `method_not_allowed` | 405 | A route that does not take this method; `Allow` lists the ones it does |
 | `path_outside_workspace` | 400 | A path that escapes the workspace or goes through a symlink |
 | `file_changed` | 412 | `If-Match` did not match the file, or the file changed during the operation |
 | `validation_error` | 422 | The request broke a rule; request-shape failures carry `errors` |
@@ -201,4 +202,5 @@ they account for every byte the command wrote before the read.
 | `keyring_unavailable` | 503 | Keyring's keys or a credential could not be fetched |
 | `preferences_unavailable` | 503 | settings-api is configured and could not answer |
 | `sandbox_error` | 500 | The sandbox could not start the shell or create its user, or the shell stopped accepting input |
+| `http_error` | varies | Any other HTTP error the framework raises itself; carries its status |
 | `internal_error` | 500 | A bug; the log has the detail |
