@@ -14,7 +14,7 @@ route matches (404) and a method a route does not have (405).
 | `X-Keyring-User-Token` | deprecated | The same token, accepted on its own for one release. Sent with `Authorization` as well, both must carry the same token. |
 | `X-Keyring-Profile` | no | Which profile. When omitted: the person's `common.default_profile` if settings-api is configured, otherwise `ENVAPI_DEFAULT_PROFILE`. A configured settings-api that cannot be reached refuses rather than guessing `personal` (503 `preferences_unavailable`). |
 | `X-API-Key` | when `ENVAPI_API_KEYS` is set | Optional front-door gate. `Authorization` never satisfies it. A missing or wrong key is 401 with detail `missing or invalid API key`. |
-| `X-Request-ID` | no | Echoed on the response; one is generated when absent. It is bound to every log line the request produces. |
+| `X-Request-ID` | no | Echoed on the response when it is 1 to 64 characters of `A-Z a-z 0-9 . _ : -`; a fresh one is generated when it is absent or anything else. It is bound to every log line the request produces. |
 | `If-Match` | no | On file mutations: the `ETag` a read returned. A mismatch is 412 `file_changed` and nothing is written. `*` matches any existing file. |
 
 Every token refusal is the same 401 body with `detail: "the token was not accepted"`,

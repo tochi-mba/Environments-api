@@ -38,6 +38,9 @@ PROFILE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 LABEL_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]{1,64}$")
 SERVICE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# A caller's X-Request-ID is echoed and bound to every log line, so it is taken only when
+# it is short and plain; anything else is replaced by a fresh id rather than trimmed.
+REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 
 REDACTION_TEMPLATE = "«redacted:{service}»"
 COMMAND_HISTORY_LIMIT = 200

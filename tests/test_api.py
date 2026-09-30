@@ -1063,3 +1063,17 @@ async def test_a_failed_write_gives_its_quota_back(
         f"{prefix}/content", json={"path": "f.txt", "content": "x" * 10}, headers=alice
     )
     assert ok.status_code == 200, ok.text
+
+
+async def test_a_supplied_request_id_is_echoed_only_when_short_and_plain(
+    client: httpx.AsyncClient,
+) -> None:
+    for kept in ("abc-123", "a" * 64, "0af7651916cd43dd8448eb211c80319c", "svc:req_1.2"):
+        response = await client.get("/health", headers={"X-Request-ID": kept})
+        assert response.headers["x-request-id"] == kept
+    for refused in ("a" * 65, "x" * 10_000, "has space", 'quote"d', "semi;colon", "caf\xe9"):
+        response = await client.get(
+            "/health", headers=[(b"X-Request-ID", refused.encode("latin-1"))]
+        )
+        fresh = response.headers["x-request-id"]
+        assert fresh != refused and len(fresh) == 32 and int(fresh, 16) >= 0
