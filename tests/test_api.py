@@ -934,3 +934,30 @@ async def test_only_a_running_command_is_shell_busy(
         f"/v1/shells/{sid}/stdin", json={"data": "x", "target": "tty"}, headers=alice
     )
     assert response.status_code == 409 and problem(response)["code"] == "conflict"
+
+
+async def test_delete_and_mkdir_are_audited(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    alice = auth_headers(keyring, "alice")
+    prefix = f"/v1/environments/{(await create_env(client, alice))['id']}/files"
+    await client.post(f"{prefix}/directories", json={"path": "made/deep"}, headers=alice)
+    await client.put(f"{prefix}/content", json={"path": "gone.txt", "content": "x"}, headers=alice)
+    await client.delete(f"{prefix}/content", params={"path": "gone.txt"}, headers=alice)
+    await client.delete(
+        f"{prefix}/content", params={"path": "made", "recursive": "true"}, headers=alice
+    )
+    audit = await client.get(
+        "/v1/admin/audit", params={"account_id": "alice"}, headers=auth_headers(keyring, "ops")
+    )
+    events = [
+        (e["action"], e["path"], e.get("recursive"))
+        for e in audit.json()["events"]
+        if e["action"].startswith("file.")
+    ]
+    assert events == [
+        ("file.mkdir", "made/deep", None),
+        ("file.write", "gone.txt", None),
+        ("file.delete", "gone.txt", False),
+        ("file.delete", "made", True),
+    ]

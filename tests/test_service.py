@@ -94,6 +94,7 @@ def test_isolation_between_accounts(service: EnvironmentService) -> None:
         lambda: service.signal_process(BOB, record.id, shell.pid, signal.SIGTERM),
         lambda: service.workspace_for(BOB, record.id),
         lambda: service.note_write(BOB, record.id, "x", 1),
+        lambda: service.note_file_action(BOB, record.id, "file.delete", "x"),
     ):
         with pytest.raises(NotFoundError):
             call()

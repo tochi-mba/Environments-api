@@ -170,6 +170,7 @@ async def create_directory(
     """Create a directory and missing parents without following links."""
     workspace, owner = service.workspace_for(caller, environment_id)
     path = await asyncio.to_thread(files.mkdir, workspace, body.path, owner)
+    service.note_file_action(caller, environment_id, "file.mkdir", path)
     return {"environment_id": environment_id, "path": path}
 
 
@@ -186,6 +187,7 @@ async def delete_file(
     """Delete one path; recursive directory deletion must be explicitly requested."""
     workspace, _ = service.workspace_for(caller, environment_id)
     deleted = await asyncio.to_thread(files.delete, workspace, path, recursive, if_match)
+    service.note_file_action(caller, environment_id, "file.delete", deleted, recursive=recursive)
     return {"environment_id": environment_id, "path": deleted}
 
 
