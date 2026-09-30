@@ -24,9 +24,10 @@ when that matters. `/ready` answers 503 until keyring's keys can be fetched.
 
 Token verification and credential resolution use `keyring-client`, and per-person settings
 use `settings-client`. Both come from their owning repositories as tagged git sources
-(`[tool.uv.sources]` in `pyproject.toml`), so `make install` fetches them; no sibling checkout
-is needed. Where those repositories are private, git needs your GitHub credentials:
-`gh auth setup-git`, which the meta-repo's bootstrap runs, makes `gh` its helper. Leaving `ENVAPI_SETTINGS_API_BASE_URL` unset turns per-person settings off.
+(`[tool.uv.sources]` in `pyproject.toml`), so `make install` fetches them; no sibling
+checkout is needed. Where those repositories are private, git needs your GitHub
+credentials: `gh auth setup-git`, which the meta-repo's bootstrap runs, makes `gh` its
+helper. Leaving `ENVAPI_SETTINGS_API_BASE_URL` unset turns per-person settings off.
 
 Without a keyring to hand, `uv run python scripts/dev_keyring.py` serves a stand-in on
 `:8001` that mints tokens (`POST /dev/mint {"account_id": "me"}`) and accepts the service
