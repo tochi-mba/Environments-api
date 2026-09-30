@@ -46,7 +46,9 @@ curl -s -XPOST localhost:8008/v1/exec -H "Authorization: Bearer $TOKEN" \
   so exit codes can be trusted; `exec` with `wait_ms` returns fast results in one call.
 * Live PIDs with state, memory and CPU; signalling verifies the target belongs to the
   environment by ancestry.
-* Files API with resolve-then-check containment.
+* A files API (list, read, search, write, exact edit, patch, mkdir, delete, copy, move) with
+  resolve-then-check containment, no symlink ever followed, and `ETag`/`If-Match` so a
+  stale edit is refused rather than applied.
 * Keyring credentials injected per command and redacted from output.
 * A layered sandbox: `directory` → `user` → `namespace`, the strongest the host allows,
   reported on `/health/ready`; `ENVAPI_MIN_SANDBOX_TIER` refuses to boot below it.

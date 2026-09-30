@@ -48,10 +48,18 @@ record, and `ENVAPI_MIN_SANDBOX_TIER` makes the service refuse to boot below it.
 
 ## Paths
 
-Every file path is resolved (symlinks followed, including ones a shell planted after the
-environment was created) and only then checked for containment within the workspace.
-Check-then-resolve is the classic symlink escape and is never done. `../`, absolute paths,
-symlinks to `/etc` and dangling symlinks pointing outside are table-driven tests.
+Every path a caller names is resolved (symlinks followed, including ones a shell planted
+after the environment was created) and only then checked for containment within the
+workspace. Check-then-resolve is the classic symlink escape and is never done. `../`,
+absolute paths, symlinks to `/etc` and dangling symlinks pointing outside are table-driven
+tests. A shell's `cwd` goes through exactly this.
+
+The files API goes further, because it reads and writes on the service's behalf rather than
+the shell's. After the containment check it refuses a path if any part of it, as spelled,
+is a symbolic link, even one pointing inside the workspace, and it opens every directory on
+the way down and the file itself by descriptor with `O_NOFOLLOW`. A link a shell swaps in
+between the check and the open therefore fails the open rather than being followed.
+Listings report symlinks as `kind: "symlink"` and do not descend into them.
 
 ## Signals
 
@@ -71,10 +79,12 @@ scans; real filesystem quotas would be exact at the cost of setup.
 
 ## Audit
 
-Every create, delete, reset, archive, shell open/close/exec/signal/stdin, process signal,
-file write and quota change is appended to `ROOT/audit.jsonl` with the account id.
-Commands are logged truncated to 512 characters. Operators can tail it via
-`GET /v1/admin/audit`.
+Every environment create, delete, reset and archive, shell open, close, exec, signal,
+stdin and reap, process signal, file write and quota change is appended to
+`ROOT/audit.jsonl` with the account id. A file write is recorded as `file.write` for every
+route that produces a file: write, edit, patch, copy, and move (under its destination).
+Deleting a file and creating a directory are not recorded today. Commands are logged
+truncated to 512 characters. Operators can tail it via `GET /v1/admin/audit`.
 
 ## Known limits
 
