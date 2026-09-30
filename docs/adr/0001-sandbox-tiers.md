@@ -34,8 +34,10 @@ work.
   syscall storm, and a tier that changed under running work would be worse than either
   answer.
 - The test suite needs Linux, and the suite is honest about which tier it exercised. Tests
-  that assert isolation run against the real mechanism; they are skipped nowhere and
-  faked nowhere, because a faked namespace proves nothing at all.
+  that assert isolation run against the real mechanism and are faked nowhere, because a
+  faked namespace proves nothing at all. A tier the host cannot provide is skipped with a
+  reason, and the coverage gate then fails on that tier's lines, so a green `make check`
+  is one that exercised every tier.
 - Development on Windows or macOS means running the tests in WSL2, the devcontainer, or a
   privileged container. That cost is accepted deliberately: the alternative is a sandbox
   whose tests pass on a machine where the sandbox does not exist.
