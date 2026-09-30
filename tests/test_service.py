@@ -577,3 +577,18 @@ def test_on_shell_change_ignores_unknown(service: EnvironmentService) -> None:
     shell.environment_id = "env_missing"
     service._on_shell_change(shell)  # environment missing: nothing to persist
     shell.environment_id = record.id
+
+
+def test_a_failed_write_releases_nothing_for_a_deleted_environment(
+    service: EnvironmentService,
+) -> None:
+    kept = service.create(ALICE, "kept", {}, [], None, None)
+    gone = service.create(ALICE, "gone", {}, [], None, None)
+    for record in (kept, gone):
+        with pytest.raises(OSError), service.admit_write(ALICE, record.id, 5):
+            assert service._usage[record.id] == 5
+            if record is gone:
+                # Deleted while the write is in flight; the write then fails.
+                service.delete(ALICE, record.id)
+            raise OSError("the write failed")
+    assert service._usage == {kept.id: 0}

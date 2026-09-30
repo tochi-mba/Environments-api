@@ -474,7 +474,11 @@ class EnvironmentService:
             yield
         except BaseException:
             with self._lock:
-                self._usage[record.id] = max(self._usage.get(record.id, 0) - reserved, 0)
+                # Deleting the environment dropped its entry; giving bytes back to it must
+                # not bring one back for an environment that no longer exists.
+                used_now = self._usage.get(record.id)
+                if used_now is not None:
+                    self._usage[record.id] = max(used_now - reserved, 0)
             raise
 
     def note_write(self, caller: Caller, environment_id: str, path: str, size: int) -> None:
