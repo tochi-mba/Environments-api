@@ -119,7 +119,9 @@ inside the workspace is accepted too).
 of it as spelled is a symbolic link, even one that points inside the workspace. Every step
 below the workspace is opened by descriptor with `O_NOFOLLOW`, so a link a shell plants
 between the check and the open is not followed either. Anything outside the workspace, or
-through a link, is 400 `path_outside_workspace`.
+through a link, is 400 `path_outside_workspace`. A path is taken as it arrives, after the
+query string's one URL decode: a `%` in a JSON body, or a `%25` in a query string, is part
+of the name.
 
 **Reads.** Whether a file is text is decided over the whole file, not the window: a NUL byte
 or invalid UTF-8 anywhere makes it binary, and binary content comes back base64. A UTF-8

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from app.errors import NotFoundError, PathEscapeError, ValidationError
+from app.file_safety import relative_path
 from app.files import FileService
 from app.paths import relative_to_workspace, resolve_within
 
@@ -75,6 +76,30 @@ def test_symlink_planted_after_the_fact(workspace: Path) -> None:
     (workspace / "later").symlink_to("/etc")
     with pytest.raises(PathEscapeError):
         resolve_within(workspace, "later/passwd")
+
+
+@pytest.mark.parametrize(
+    "requested",
+    [
+        "%2e%2e",
+        "%2e%2e/%2e%2e/etc/passwd",
+        "%2E%2E%2F%2E%2E%2Fetc%2Fpasswd",
+        "sub%2F..%2F..%2Fx",
+        "%2Fetc%2Fpasswd",
+        "%252e%252e%252f",
+        "etc-link%2Fpasswd",
+    ],
+)
+def test_percent_escapes_are_names_not_separators(workspace: Path, requested: str) -> None:
+    # The framework has already decoded the query string once, and a JSON body is never
+    # encoded: a further decode would turn "%2e%2e" into "..", so it is not done.
+    assert relative_path(workspace, requested) == requested
+
+
+def test_percent_escapes_cannot_reach_through_a_link_or_out(workspace: Path) -> None:
+    for requested in ("../%2e%2e", "etc-link/%2e%2e", "%2e%2e/../../x"):
+        with pytest.raises(PathEscapeError):
+            relative_path(workspace, requested)
 
 
 @pytest.fixture

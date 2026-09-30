@@ -1077,3 +1077,46 @@ async def test_a_supplied_request_id_is_echoed_only_when_short_and_plain(
         )
         fresh = response.headers["x-request-id"]
         assert fresh != refused and len(fresh) == 32 and int(fresh, 16) >= 0
+
+
+async def test_encoded_traversal_is_a_literal_name_or_refused(
+    client: httpx.AsyncClient, keyring: FakeKeyring, settings: Settings
+) -> None:
+    alice = auth_headers(keyring, "alice")
+    prefix = f"/v1/environments/{(await create_env(client, alice))['id']}/files"
+    # In a JSON body nothing is URL-encoded, so a percent escape is part of the name.
+    for path in ("%2e%2e%2F%2e%2e%2Fescape.txt", "%2e%2e/%2e%2e/escape.txt", "a%2Fb"):
+        written = await client.put(
+            f"{prefix}/content", json={"path": path, "content": path}, headers=alice
+        )
+        assert written.status_code == 200 and written.json()["path"] == path, written.text
+        # httpx encodes "%" as "%25"; the framework's one decode gives back the same name.
+        read = await client.get(f"{prefix}/content", params={"path": path}, headers=alice)
+        assert read.json()["content"] == path
+    moved = await client.post(
+        f"{prefix}/move",
+        json={"source": "a%2Fb", "destination": "%2e%2e%2F%2e%2e%2Fmoved"},
+        headers=alice,
+    )
+    assert moved.json()["path"] == "%2e%2e%2F%2e%2e%2Fmoved"
+    listing = await client.get(prefix, params={"depth": 3}, headers=alice)
+    assert {e["path"] for e in listing.json()["entries"]} == {
+        "%2e%2e",
+        "%2e%2e/%2e%2e",
+        "%2e%2e/%2e%2e/escape.txt",
+        "%2e%2e%2F%2e%2e%2Fescape.txt",
+        "%2e%2e%2F%2e%2e%2Fmoved",
+    }
+    # Nothing landed outside the workspace, above the data root or beside it.
+    escaped = [p for p in settings.root.parent.rglob("*") if "escape" in p.name]
+    assert escaped and all("workspace" in p.relative_to(settings.root).parts for p in escaped)
+    # A traversal encoded once in the URL is decoded once by the framework and refused.
+    for raw in ("%2e%2e%2F%2e%2e%2Fetc%2Fpasswd", "..%2F..%2Fetc%2Fpasswd"):
+        response = await client.get(f"{prefix}/content?path={raw}", headers=alice)
+        assert response.status_code == 400
+        assert problem(response)["code"] == "path_outside_workspace"
+    # Encoded twice, it is the literal name "%2e%2e/...", which does not exist here.
+    response = await client.get(
+        f"{prefix}/content?path=%252e%252e%252F%252e%252e%252Fetc%252Fpasswd", headers=alice
+    )
+    assert response.status_code == 404 and problem(response)["code"] == "not_found"

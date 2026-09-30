@@ -10,6 +10,11 @@ All notable changes to this service are recorded here. The format follows
 - Take a caller's `X-Request-ID` only when it is 1 to 64 characters of `A-Z a-z 0-9 . _ : -`,
   and generate a fresh one otherwise. Any value of any length was echoed on the response
   and bound to every log line the request wrote.
+- Decode a file path once. The files API URL-decoded every path again after the framework
+  had, and decoded JSON bodies that are never encoded, so `%2e%2e` and `%2F` became `..`
+  and `/` after the spelling was chosen, and `%2Fetc%2Fpasswd` was an absolute path.
+  Containment still refused every escape, but a path now means what it says: a `%` is part
+  of the name, and a file whose name contains one can be read, written and moved.
 - Pin the token issuer to `ENVAPI_KEYRING_ISSUER`. The verifier required an `iss` claim but
   never compared it, so a token signed by any other keyring with a published key was accepted.
 - Refuse every token with one identical 401 body. Responses no longer carry `token_error`
