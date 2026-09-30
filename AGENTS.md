@@ -7,8 +7,8 @@ Read this before changing anything. `docs/` has the long form.
 An HTTP service that creates sandboxed environments and runs shells in them for remote
 callers identified by keyring tokens. It is remote code execution as a product. The
 sandbox tiers, path containment and PID-ownership checks are the feature; treat any change
-to `app/sandbox/`, `app/paths.py`, `app/processes.py` or `EnvironmentService._owned` as a
-security change.
+to `app/sandbox/`, `app/paths.py`, `app/file_safety.py`, `app/processes.py` or
+`EnvironmentService._owned` as a security change.
 
 ## Conventions
 
