@@ -2,11 +2,11 @@
 
 This service manages real processes and real files, so the suite runs real short-lived
 processes in temporary directories. Mocking `subprocess` would prove nothing: the entire
-risk lives in whether the real thing behaves. It is still fast (well under ten seconds)
-because it gates on events and never sleeps to wait.
+risk lives in whether the real thing behaves. It is still fast (the whole suite runs in
+well under half a minute) because it gates on events and never sleeps to wait.
 
 ```
-make check   # ruff format --check, ruff check, mypy --strict, pytest with the 100% gate
+make check   # ruff format --check, ruff check, mypy --strict, lint-imports, pytest with the 100% gate
 ```
 
 ## What is proven where
@@ -20,6 +20,9 @@ make check   # ruff format --check, ruff check, mypy --strict, pytest with the 1
 | Orphan reconciliation | `test_service.py` | A simulated restart kills the recorded group; a recycled pid with a different start time is left alone |
 | Buffer | `test_shell_units.py`, `test_shell.py` | Cursor semantics, rollover, `dropped_bytes`, log cap |
 | Path containment | `test_paths_files.py` | `../`, absolute, symlink to `/etc`, dangling symlink out, a symlink planted after the fact |
+| File editing | `test_file_edits.py`, `test_file_service_edges.py`, `test_api.py` | Exact replacement and its refusals, patch parsing and partial application, ETags and `If-Match`, UTF-8 windows, binary files refused for editing, copy and move never overwriting, directory deletion, search limits and skipped files |
+| Error branches and races | `test_edges.py` | Failures no real input can produce: a store write whose rename fails, a `stat` that fails part-way, a stdin write that would block, a process gone before it is signalled, the reaper loop surviving an error |
+| `/proc` parsing | `test_procfs.py` | `stat` parsing (a command name with spaces and parentheses included), a missing boot time, descendants, and a snapshot that skips entries that are not processes or have gone |
 | PID ownership | `test_service.py`, `test_api.py` | Signalling a process in another environment, and one belonging to none, are both refused |
 | Quotas | `test_service.py`, `test_api.py` | Every limit returns 409 naming itself; disk quota refuses new work |
 | Sandbox | `test_sandbox.py`, `test_child_setup.py` | Each tier for real (skipped with a reason when the host cannot), the detector against the host, rlimits and tty setup in forked children |
@@ -42,10 +45,11 @@ make check   # ruff format --check, ruff check, mypy --strict, pytest with the 1
 * `tests/fake_keyring.py` points `keyring_client.testing.FakeKeyring`, the fake the whole
   family shares, at this service: real RS256 tokens, a real JWKS document, and keyring's
   internal endpoint refusing what keyring refuses, served through `httpx.MockTransport`.
-* `test_keyring.py`, `test_settings.py`, `test_shell_units.py` and `test_preferences.py`
-  need no host capability, so `uv run pytest --noconftest tests/test_keyring.py
-  tests/test_settings.py tests/test_shell_units.py tests/test_preferences.py` runs them on
-  any workstation, Windows included.
+* `test_keyring.py`, `test_settings.py`, `test_shell_units.py`, `test_preferences.py` and
+  `test_file_edits.py` need no host capability, so `uv run pytest --noconftest
+  tests/test_keyring.py tests/test_settings.py tests/test_shell_units.py
+  tests/test_preferences.py tests/test_file_edits.py` runs them on any workstation, Windows
+  included.
 * Gate on events (`wait_command`, `wait_output`, `wait_exit`) and bounded polls of
   `/proc`; never `sleep` to wait for a process.
 
