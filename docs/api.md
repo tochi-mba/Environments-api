@@ -67,11 +67,11 @@ deployment has `ENVAPI_ALLOW_NETWORK=false`.
 `exec` returns immediately with the command record. With `wait_ms` it blocks up to that
 long and, if the command finished, the same response carries `output`, `exit_code` and
 `state: "exited"`; otherwise `state: "running"` and the caller polls. `output` is the start
-of the command's output, at most `ENVAPI_MAX_FILE_READ_BYTES` of it; `output_truncated_bytes` counts what its cap left out and
-`output_dropped_bytes` what the ring buffer had already evicted. `timeout_ms` is a
-hard deadline: on expiry the command's processes are SIGKILLed and the state becomes
-`timed_out`; if nothing below the shell could be killed (a builtin loop), the shell itself
-is killed a second later.
+of the command's output, at most `ENVAPI_MAX_FILE_READ_BYTES` of it;
+`output_truncated_bytes` counts what its cap left out and `output_dropped_bytes` what the
+ring buffer had already evicted. `timeout_ms` is a hard deadline: on expiry the command's
+processes are SIGKILLed and the state becomes `timed_out`; if nothing below the shell could
+be killed (a builtin loop), the shell itself is killed a second later.
 
 Command `state` is one of `running`, `exited`, `timed_out`, `shell_died`. A command that
 ends the shell (`exit 3`) is `shell_died` with `exit_code: 3`; a shell killed by a signal
@@ -158,15 +158,14 @@ its full length in `original_chars`.
 
 ## Convenience
 
-`POST /v1/exec`
-`{environment_id, command, timeout_ms, cwd, env, pty, max_output_bytes, output_window}`
-(`timeout_ms` defaults to 60000 and is at most 10 minutes; `max_output_bytes` defaults to
-256 KiB and is at most 8 MiB) opens an ephemeral shell, runs the command in a subshell, waits, returns output and exit
-code, and closes the shell whatever happened. The single most useful shape for an MCP tool.
-The response also carries `shell_state`, `credentials_injected` and `credentials_missing`
-(the declared services keyring holds nothing for).
-`command` in the response is the command as sent; the subshell around it appears only in
-the audit log, which records what the shell ran.
+`POST /v1/exec` `{environment_id, command, timeout_ms, cwd, env, pty, max_output_bytes,
+output_window}` (`timeout_ms` defaults to 60000 and is at most 10 minutes;
+`max_output_bytes` defaults to 256 KiB and is at most 8 MiB) opens an ephemeral shell, runs
+the command in a subshell, waits, returns output and exit code, and closes the shell
+whatever happened. The single most useful shape for an MCP tool. The response also carries
+`shell_state`, `credentials_injected` and `credentials_missing` (the declared services
+keyring holds nothing for). `command` in the response is the command as sent; the subshell
+around it appears only in the audit log, which records what the shell ran.
 
 At most `max_output_bytes` of output come back. `output_window` says which end: `head`
 (the default) keeps the first bytes, `tail` the last, which is where a test run or a build
