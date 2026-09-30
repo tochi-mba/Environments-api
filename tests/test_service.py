@@ -214,9 +214,12 @@ def test_signal_stdin_and_processes(service: EnvironmentService) -> None:
         ALICE, shell.id, "sleep 30 & echo started; read x; echo got=$x; wait", None, []
     )
     assert shell.wait_output(command.output_start, 10)
+    # `sleep 30 &` is a fork of the shell that then execs sleep, and "started" can be
+    # printed between the two: until the exec the child's cmdline is still the shell's.
+    # Two processes is therefore not enough; poll until the child has become sleep.
     deadline = time.monotonic() + 10
     procs = service.list_processes(ALICE, record.id)
-    while len(procs) < 2 and time.monotonic() < deadline:
+    while not any("sleep" in p.cmdline for p in procs) and time.monotonic() < deadline:
         procs = service.list_processes(ALICE, record.id)
     pids = {p.pid: p for p in procs}
     assert shell.pid in pids and pids[shell.pid].shell_id == shell.id
