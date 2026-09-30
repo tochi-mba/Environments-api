@@ -17,11 +17,11 @@ make run                          # uvicorn on :8008
 curl localhost:8008/health/ready  # reports the active sandbox tier
 ```
 
-Token verification and credential resolution use `keyring-client`, which is not yet
-published: `make install` takes it from `../Keyring-api/clients/python`, so check Keyring-api
-out beside this repository. Per-person settings use `settings-client` from
-`../Settings-api/clients/python` the same way; unset `ENVAPI_SETTINGS_API_BASE_URL` keeps
-today's behaviour.
+Token verification and credential resolution use `keyring-client`, and per-person settings
+use `settings-client`. Both come from their owning repositories as tagged git sources
+(`[tool.uv.sources]` in `pyproject.toml`), so `make install` fetches them; no sibling checkout
+is needed. Where those repositories are private, git needs your GitHub credentials:
+`gh auth setup-git`, which the meta-repo's bootstrap runs, makes `gh` its helper. Leaving `ENVAPI_SETTINGS_API_BASE_URL` unset turns per-person settings off.
 
 Without a keyring to hand, `uv run python scripts/dev_keyring.py` serves a stand-in on
 `:8001` that mints tokens (`POST /dev/mint {"account_id": "me"}`) and accepts the service
@@ -114,9 +114,9 @@ docker run --privileged -p 8008:8008 -v envapi:/var/lib/envapi \
   environments-api
 ```
 
-Until `keyring-client` and `settings-client` are published the image cannot be built from this
-repository alone: `uv sync` resolves them from `../Keyring-api/clients/python` and
-`../Settings-api/clients/python`, which are outside the build context.
+The build fetches `keyring-client` and `settings-client` from their tagged git sources.
+The `github_token` BuildKit secret is only needed when those repositories are private; it
+exists for that one `RUN` and is never written to a layer.
 
 `--privileged` (or at least `--cap-add SYS_ADMIN --security-opt seccomp=unconfined`) is
 what lets the namespace tier come up inside a container; without it the service runs at
