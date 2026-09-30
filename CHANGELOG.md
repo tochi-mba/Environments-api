@@ -7,6 +7,9 @@ All notable changes to this service are recorded here. The format follows
 
 ### Security
 
+- Take a caller's `X-Request-ID` only when it is 1 to 64 characters of `A-Z a-z 0-9 . _ : -`,
+  and generate a fresh one otherwise. Any value of any length was echoed on the response
+  and bound to every log line the request wrote.
 - Pin the token issuer to `ENVAPI_KEYRING_ISSUER`. The verifier required an `iss` claim but
   never compared it, so a token signed by any other keyring with a published key was accepted.
 - Refuse every token with one identical 401 body. Responses no longer carry `token_error`
