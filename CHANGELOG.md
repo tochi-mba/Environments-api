@@ -59,9 +59,8 @@ All notable changes to this service are recorded here. The format follows
   day past their cache lifetime, instead of every request failing once the cache expires.
 - `ENVAPI_JWKS_CACHE_SECONDS` defaults to 3600 (was 300), as in the rest of the family, and
   must be between 0 and 86400.
-- Token verification and credential resolution use `keyring-client` from the sibling
-  `Keyring-api/clients/python` checkout, which a clone, CI job or image build now needs
-  beside this repository. The local JWKS cache (`app/keyring/jwks.py`) and
+- Token verification and credential resolution use `keyring-client` from
+  `Keyring-api/clients/python`, fetched as a tagged git source. The local JWKS cache (`app/keyring/jwks.py`) and
   `Settings.jwks_url` are gone, and `create_app` takes `keyring_transport` and `clock` in
   place of `http_client`.
 - `scripts/dev_keyring.py` is keyring-client's shared fake and refuses what keyring refuses.

@@ -138,6 +138,7 @@ changes.
   (`PUT /dev/credentials/{profile}/{service}` with `account_id`, `headers` and
   `query_params`), and answers the credentials endpoint refusing what keyring refuses. Its
   issuer and service token default to the values in `.env.example`.
-* **The sibling checkout.** keyring-client is unreleased and comes from
-  `../Keyring-api/clients/python`, so a clone, a CI job or an image build of this service
-  needs Keyring-api checked out beside it until the client is published.
+* **Where keyring-client comes from.** A tagged git source,
+  `Keyring-api/clients/python` at `keyring-client-v0.1.0` (`[tool.uv.sources]` in
+  `pyproject.toml`). A new client release is a new tag and a bump there, never a vendored
+  copy.
