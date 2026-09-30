@@ -95,5 +95,9 @@ All notable changes to this service are recorded here. The format follows
   `application/problem+json` with `code` `not_found` and `method_not_allowed`, like every
   other error. They were FastAPI's plain `{"detail": ...}` JSON. The 405 keeps its `Allow`
   header.
+- `shell_busy` means only that a command is already running. A command over 1 MiB is now
+  `422 validation_error` (still carrying `limit`), and `target: "tty"` on a shell opened
+  without `pty` is `409 conflict`; both were reported as `shell_busy`, so a client that
+  waited for the shell to go idle and retried would never succeed.
 - `POST /v1/exec` echoes `command` as the caller sent it. It echoed the subshell the route
   wraps it in, `( <command>\n)`, which a model was then shown as the command it had run.

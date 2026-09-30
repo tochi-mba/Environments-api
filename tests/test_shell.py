@@ -11,7 +11,13 @@ import pytest
 
 from app import procfs
 from app.constants import CommandState, ShellState
-from app.errors import SandboxError, ShellBusyError, ShellNotRunningError
+from app.errors import (
+    ConflictError,
+    SandboxError,
+    ShellBusyError,
+    ShellNotRunningError,
+    ValidationError,
+)
 from app.keyring.client import ResolvedCredential
 from app.sandbox import ResourceLimits, Sandbox, SpawnRequest
 from app.sandbox.directory import DirectorySandbox
@@ -136,8 +142,10 @@ def test_stdin_reaches_command(shell: Shell) -> None:
     assert shell.write_stdin(b"abc\n") == 4
     assert shell.wait_command(record, 10)
     assert shell.read_output(record.output_start, 100).data == b"got=abc\n"
-    with pytest.raises(ShellBusyError):
+    # The shell has no tty; that is not the shell being busy.
+    with pytest.raises(ConflictError) as info:
         shell.write_stdin(b"x", target="tty")
+    assert not isinstance(info.value, ShellBusyError) and info.value.code == "conflict"
 
 
 def test_second_exec_is_refused_and_signal_interrupts(shell: Shell) -> None:
@@ -270,8 +278,10 @@ def test_stdin_write_when_shell_not_reading(shell: Shell, monkeypatch: pytest.Mo
         shell.write_stdin(big.encode() * 4)
     shell.signal(signal.SIGKILL)
     assert shell.wait_command(record, 10)
-    with pytest.raises(ShellBusyError, match="too large"):
+    # An idle shell refuses an oversized command as invalid, not as busy.
+    with pytest.raises(ValidationError, match="too large") as too_large:
         shell.exec("x" * (2 << 20))
+    assert too_large.value.extra == {"limit": 1024 * 1024}
 
 
 def test_stdin_closed_after_exit(shell: Shell) -> None:

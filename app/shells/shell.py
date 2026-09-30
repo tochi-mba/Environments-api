@@ -26,7 +26,13 @@ import structlog
 
 from app import procfs
 from app.constants import COMMAND_HISTORY_LIMIT, CommandState, ShellState
-from app.errors import SandboxError, ShellBusyError, ShellNotRunningError
+from app.errors import (
+    ConflictError,
+    SandboxError,
+    ShellBusyError,
+    ShellNotRunningError,
+    ValidationError,
+)
 from app.keyring.client import ResolvedCredential
 from app.sandbox.protocol import Sandbox, SpawnRequest
 from app.shells.buffer import OutputChunk, RingBuffer
@@ -329,12 +335,13 @@ class Shell:
         """Start ``command``; returns immediately with its record.
 
         Raises:
+            ValidationError: The command is over ``MAX_COMMAND_BYTES``.
             ShellNotRunningError: The shell has exited.
             ShellBusyError: A command is still running; a shell is serial by nature.
             SandboxError: The shell stopped accepting input.
         """
         if len(command.encode()) > MAX_COMMAND_BYTES:
-            raise ShellBusyError("command is too large", limit=MAX_COMMAND_BYTES)
+            raise ValidationError("command is too large", limit=MAX_COMMAND_BYTES)
         with self._cond:
             if self.state is not ShellState.RUNNING:
                 raise ShellNotRunningError(f"shell {self.id} is {self.state.value}")
@@ -429,7 +436,7 @@ class Shell:
                 raise ShellNotRunningError(f"shell {self.id} is {self.state.value}")
             if target == "tty":
                 if self._tty_fd is None:
-                    raise ShellBusyError("shell has no tty", code_hint="open with pty=true")
+                    raise ConflictError("shell has no tty", code_hint="open with pty=true")
                 return os.write(self._tty_fd, data)
             self._write_stdin(data)
             self.last_activity = self._clock()
