@@ -64,10 +64,12 @@ def run_quiet(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
 
 from collections.abc import AsyncIterator  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 import httpx  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
 
+from app.constants import PROBLEM_JSON  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.sandbox.detect import HostCapabilities  # noqa: E402
 from app.settings import Settings  # noqa: E402
@@ -120,3 +122,32 @@ async def client(settings: Settings, keyring: FakeKeyring) -> AsyncIterator[http
         async with httpx.AsyncClient(transport=transport, base_url="http://envapi") as http:
             http.app = app  # type: ignore[attr-defined]
             yield http
+
+
+# ----- HTTP helpers shared by the API test modules ----------------------------------
+
+
+async def create_env(
+    client: httpx.AsyncClient, headers: dict[str, str], **body: Any
+) -> dict[str, Any]:
+    payload = {"name": "env", **body}
+    response = await client.post("/v1/environments", json=payload, headers=headers)
+    assert response.status_code == 201, response.text
+    data: dict[str, Any] = response.json()
+    return data
+
+
+async def open_shell(
+    client: httpx.AsyncClient, headers: dict[str, str], env_id: str, **body: Any
+) -> dict[str, Any]:
+    response = await client.post(f"/v1/environments/{env_id}/shells", json=body, headers=headers)
+    assert response.status_code == 201, response.text
+    data: dict[str, Any] = response.json()
+    return data
+
+
+def problem(response: httpx.Response) -> dict[str, Any]:
+    assert response.headers["content-type"].startswith(PROBLEM_JSON)
+    body: dict[str, Any] = response.json()
+    assert body["status"] == response.status_code and "code" in body and "instance" in body
+    return body
