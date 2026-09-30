@@ -21,6 +21,8 @@ make lint type                                   # both work everywhere
 uv run pytest --noconftest tests/test_keyring.py tests/test_settings.py -q
 ```
 
+[docs/testing.md](docs/testing.md) lists every suite that runs without the sandbox.
+
 `make check` is the gate, and it is only honest on Linux. Say in the pull request which
 platform you ran it on.
 
@@ -28,7 +30,7 @@ platform you ran it on.
 
 ```bash
 make install             # venv and every dependency, from the lockfile
-uv run pre-commit install
+uvx pre-commit install   # pre-commit is not a project dependency; uvx fetches it
 make check
 ```
 
