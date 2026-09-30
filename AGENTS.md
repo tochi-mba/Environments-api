@@ -23,8 +23,11 @@ security change.
   that records a constraint, a trade-off or a non-obvious failure earns its place.
 * All errors are `DomainError` subclasses in `app/errors.py`, rendered as
   `application/problem+json` with a stable `code`. Routes never deal in status codes.
-* Dependencies come through `app/api/deps.py`; tests override with
-  `app.dependency_overrides`, never by monkeypatching internals.
+* Dependencies come through `app/api/deps.py` and `create_app`'s arguments (settings,
+  keyring transport, clock, host capabilities, settings-api client); tests substitute them
+  there. Patching a module's internals is kept for the error branches and races no real
+  input can reach, most of them in `tests/test_edges.py` and
+  `tests/test_file_service_edges.py`.
 * Coverage gate at 100% (`fail_under = 100`). Permitted exclusions: `if TYPE_CHECKING:`,
   protocol bodies (`...`), `if __name__ == "__main__":`. Nothing else.
 * `make check` = format check, lint, types, import contracts, tests with the gate. CI runs
@@ -56,5 +59,6 @@ security change.
 
 ## Running locally
 
-`uv run python scripts/dev_keyring.py` (a keyring stand-in on :8001 that accepts the service
-token in `.env.example`), then `make run`, then `make smoke`.
+`cp .env.example .env`, then `uv run python scripts/dev_keyring.py` (a keyring stand-in on
+:8001 that accepts the service token in `.env.example`), then `make run`, then
+`DEV_KEYRING_URL=http://127.0.0.1:8001 make smoke`.

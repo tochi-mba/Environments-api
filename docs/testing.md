@@ -33,10 +33,12 @@ make check   # ruff format --check, ruff check, mypy --strict, pytest with the 1
 
 ## Conventions
 
-* Dependencies come through `app/api/deps.py`; tests override with
-  `app.dependency_overrides`, never by monkeypatching internals. `create_app()` takes the
-  settings, a keyring transport (`FakeKeyring().transport()`), a clock, host capabilities,
-  and an optional settings-api client.
+* Dependencies come through `app/api/deps.py` and `create_app()`, which takes the settings,
+  a keyring transport (`FakeKeyring().transport()`), a clock, host capabilities, and an
+  optional settings-api client; tests substitute them there. Patching a module's internals
+  is kept for error branches and races that no real input can reach (a file vanishing
+  between two calls, a failing `os.replace`), and most of those live in `test_edges.py`
+  and `test_file_service_edges.py`.
 * `tests/fake_keyring.py` points `keyring_client.testing.FakeKeyring`, the fake the whole
   family shares, at this service: real RS256 tokens, a real JWKS document, and keyring's
   internal endpoint refusing what keyring refuses, served through `httpx.MockTransport`.
