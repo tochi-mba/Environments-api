@@ -1,8 +1,9 @@
 # CLAUDE.md
 
-Read [AGENTS.md](AGENTS.md). It is the operating manual for this repository — the layout,
-the invariants, the test-first loop, the recipes and the definition of done — and it is
-normative. This file exists so that a tool looking for `CLAUDE.md` finds its way there.
+Read [AGENTS.md](AGENTS.md). It is the operating manual for this repository — the
+conventions, the testing rules, the sharp edges and how to run it locally — and it is
+normative. The test-first loop is in [CONTRIBUTING.md](CONTRIBUTING.md), and the layout in
+the [README](README.md). This file exists so that a tool looking for `CLAUDE.md` finds its way there.
 
 Two things worth knowing before the first edit:
 
