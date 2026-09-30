@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, Query, Response
@@ -115,6 +116,7 @@ async def write_file(
         body.mode,
         owner,
         if_match,
+        functools.partial(service.admit_write, caller, environment_id),
     )
     service.note_write(caller, environment_id, result.path, result.size)
     response.headers["ETag"] = result.etag
@@ -134,7 +136,14 @@ async def edit_file(
     """Replace one exact occurrence and return a reviewable diff."""
     workspace, owner = service.workspace_for(caller, environment_id)
     result = await asyncio.to_thread(
-        files.edit, workspace, body.path, body.old_string, body.new_string, owner, if_match
+        files.edit,
+        workspace,
+        body.path,
+        body.old_string,
+        body.new_string,
+        owner,
+        if_match,
+        functools.partial(service.admit_write, caller, environment_id),
     )
     service.note_write(caller, environment_id, result.path, result.size)
     response.headers["ETag"] = result.etag
@@ -153,7 +162,15 @@ async def patch_file(
 ) -> dict[str, Any]:
     """Apply a validated single-file unified patch and identify rejected hunks."""
     workspace, owner = service.workspace_for(caller, environment_id)
-    result = await asyncio.to_thread(files.patch, workspace, body.path, body.patch, owner, if_match)
+    result = await asyncio.to_thread(
+        files.patch,
+        workspace,
+        body.path,
+        body.patch,
+        owner,
+        if_match,
+        functools.partial(service.admit_write, caller, environment_id),
+    )
     service.note_write(caller, environment_id, result.path, result.size)
     response.headers["ETag"] = result.etag
     return {"environment_id": environment_id, **dataclasses.asdict(result)}
@@ -211,6 +228,7 @@ async def _transfer(
         move,
         owner,
         if_match,
+        functools.partial(service.admit_write, caller, environment_id),
     )
     service.note_write(caller, environment_id, result.path, result.size)
     response.headers["ETag"] = result.etag

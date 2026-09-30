@@ -961,3 +961,105 @@ async def test_delete_and_mkdir_are_audited(
         ("file.delete", "gone.txt", False),
         ("file.delete", "made", True),
     ]
+
+
+async def test_disk_quota_is_checked_before_a_file_is_written(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    alice = auth_headers(keyring, "alice")
+    prefix = f"/v1/environments/{(await create_env(client, alice))['id']}/files"
+    await client.put(
+        "/v1/admin/quotas/alice",
+        json={"overrides": {"max_disk_bytes": 10}},
+        headers=auth_headers(keyring, "ops"),
+    )
+
+    async def refused(response: httpx.Response) -> None:
+        body = problem(response)
+        assert response.status_code == 409 and body["code"] == "quota_exceeded", response.text
+        assert body["limit"] == "max_disk_bytes" and body["maximum"] == 10
+
+    async def names() -> set[str]:
+        listing = await client.get(prefix, params={"depth": 5}, headers=alice)
+        return {e["path"] for e in listing.json()["entries"]}
+
+    async def content(path: str) -> str:
+        read = await client.get(f"{prefix}/content", params={"path": path}, headers=alice)
+        text: str = read.json()["content"]
+        return text
+
+    # A write that would take usage past the quota is refused, and leaves no file and no
+    # parent directory behind.
+    await refused(
+        await client.put(
+            f"{prefix}/content", json={"path": "new/big.txt", "content": "x" * 11}, headers=alice
+        )
+    )
+    assert await names() == set()
+    ok = await client.put(
+        f"{prefix}/content", json={"path": "f.txt", "content": "x" * 9 + "\n"}, headers=alice
+    )
+    assert ok.status_code == 200
+    # Usage now sits at the quota: any route that would add a byte is refused.
+    await refused(
+        await client.put(f"{prefix}/content", json={"path": "one", "content": "y"}, headers=alice)
+    )
+    await refused(
+        await client.put(
+            f"{prefix}/content",
+            json={"path": "f.txt", "content": "y", "mode": "append"},
+            headers=alice,
+        )
+    )
+    await refused(
+        await client.post(
+            f"{prefix}/edit",
+            json={"path": "f.txt", "old_string": "\n", "new_string": "\n\n"},
+            headers=alice,
+        )
+    )
+    await refused(
+        await client.post(
+            f"{prefix}/patch",
+            json={"path": "f.txt", "patch": f"@@ -1 +1 @@\n-{'x' * 9}\n+{'x' * 11}\n"},
+            headers=alice,
+        )
+    )
+    await refused(
+        await client.post(
+            f"{prefix}/copy", json={"source": "f.txt", "destination": "d/c.txt"}, headers=alice
+        )
+    )
+    assert await names() == {"f.txt"} and await content("f.txt") == "x" * 9 + "\n"
+    # What adds nothing is admitted at the quota: a same-size rewrite and a move.
+    same = await client.put(
+        f"{prefix}/content", json={"path": "f.txt", "content": "z" * 9 + "\n"}, headers=alice
+    )
+    assert same.status_code == 200
+    moved = await client.post(
+        f"{prefix}/move", json={"source": "f.txt", "destination": "m/f.txt"}, headers=alice
+    )
+    assert moved.status_code == 200 and await content("m/f.txt") == "z" * 9 + "\n"
+
+
+async def test_a_failed_write_gives_its_quota_back(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    alice = auth_headers(keyring, "alice")
+    prefix = f"/v1/environments/{(await create_env(client, alice))['id']}/files"
+    await client.put(
+        "/v1/admin/quotas/alice",
+        json={"overrides": {"max_disk_bytes": 10}},
+        headers=auth_headers(keyring, "ops"),
+    )
+    for _ in range(3):
+        stale = await client.put(
+            f"{prefix}/content",
+            json={"path": "f.txt", "content": "x" * 6},
+            headers={**alice, "If-Match": '"stale"'},
+        )
+        assert stale.status_code == 412
+    ok = await client.put(
+        f"{prefix}/content", json={"path": "f.txt", "content": "x" * 10}, headers=alice
+    )
+    assert ok.status_code == 200, ok.text

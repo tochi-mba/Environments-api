@@ -24,7 +24,7 @@ make check   # ruff format --check, ruff check, mypy --strict, lint-imports, pyt
 | Error branches and races | `test_edges.py` | Failures no real input can produce: a store write whose rename fails, a `stat` that fails part-way, a stdin write that would block, a process gone before it is signalled, the reaper loop surviving an error |
 | `/proc` parsing | `test_procfs.py` | `stat` parsing (a command name with spaces and parentheses included), a missing boot time, descendants, and a snapshot that skips entries that are not processes or have gone |
 | PID ownership | `test_service.py`, `test_api.py` | Signalling a process in another environment, and one belonging to none, are both refused |
-| Quotas | `test_service.py`, `test_api.py` | Every limit returns 409 naming itself; disk quota refuses new work |
+| Quotas | `test_service.py`, `test_api.py` | Every limit returns 409 naming itself; disk quota refuses new work, and a file write before it lands |
 | Sandbox | `test_sandbox.py`, `test_child_setup.py` | Each tier for real (skipped with a reason when the host cannot), the detector against the host, rlimits and tty setup in forked children |
 | Redaction | `test_shell.py`, `test_api.py` | `echo $TOKEN` never reaches the buffer or the log; split across chunks |
 | Keyring | `test_keyring.py`, `test_api.py` | Issuer, audience, expiry by the injected clock, forged, HS256 and unsigned tokens, no kid, an unknown kid after a good fetch (401, and no flood of fetches), keys served stale through an outage, unreachable keys (503, fixed text), every refusal the same body; `Authorization: Bearer`, the legacy header and a mismatch; keyring's credential answers as variables and as errors |
