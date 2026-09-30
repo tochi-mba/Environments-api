@@ -461,6 +461,17 @@ class EnvironmentService:
             "file.write", caller.account_id, environment_id=environment_id, path=path, bytes=size
         )
 
+    def note_file_action(
+        self, caller: Caller, environment_id: str, action: str, path: str, **fields: Any
+    ) -> None:
+        """Record a file mutation that adds no bytes: activity for the reaper, an audit entry."""
+        with self._lock:
+            record = self._owned(caller, environment_id)
+            self._touch(record)
+        self._audit.record(
+            action, caller.account_id, environment_id=environment_id, path=path, **fields
+        )
+
     # ----- shells --------------------------------------------------------------------
 
     def open_shell(

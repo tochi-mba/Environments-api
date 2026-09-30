@@ -99,5 +99,7 @@ All notable changes to this service are recorded here. The format follows
   `422 validation_error` (still carrying `limit`), and `target: "tty"` on a shell opened
   without `pty` is `409 conflict`; both were reported as `shell_busy`, so a client that
   waited for the shell to go idle and retried would never succeed.
+- Deleting a file or directory and creating a directory through the files API are audited,
+  as `file.delete` (with `recursive`) and `file.mkdir`, like every other file mutation.
 - `POST /v1/exec` echoes `command` as the caller sent it. It echoed the subshell the route
   wraps it in, `( <command>\n)`, which a model was then shown as the command it had run.

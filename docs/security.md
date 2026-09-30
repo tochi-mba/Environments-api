@@ -83,7 +83,8 @@ Every environment create, delete, reset and archive, shell open, close, exec, si
 stdin and reap, process signal, file write and quota change is appended to
 `ROOT/audit.jsonl` with the account id. A file write is recorded as `file.write` for every
 route that produces a file: write, edit, patch, copy, and move (under its destination).
-Deleting a file and creating a directory are not recorded today. Commands are logged
+Deleting a file or directory is recorded as `file.delete` (with `recursive`), and creating
+a directory as `file.mkdir`. Commands are logged
 truncated to 512 characters. Operators can tail it via `GET /v1/admin/audit`.
 
 ## Known limits
