@@ -1,7 +1,8 @@
 # environments-api
 
-Sandboxed environments and shells, as an API. The third service alongside `keyring-api`
-(identity and credentials) and `web-search-api`: it creates isolated workspaces, runs
+Sandboxed environments and shells, as an API. It is a service in the
+[LUCY](https://github.com/tochi-mba/LUCY-assistant) family and authenticates against
+[keyring](https://github.com/tochi-mba/Keyring-api): it creates isolated workspaces, runs
 shells in them, reports what is running, and lets an assistant kill or wait on it.
 
 This service executes arbitrary commands on behalf of remote callers. It is remote code
@@ -13,9 +14,13 @@ are the feature, not polish. Read `docs/security.md` before deploying it.
 ```
 make install                      # uv sync --all-groups
 cp .env.example .env              # point ENVAPI_KEYRING_* at keyring
-make run                          # uvicorn on :8008
-curl localhost:8008/health/ready  # reports the active sandbox tier
+make run                          # uvicorn on :8008, all interfaces, with reload
+curl localhost:8008/ready         # the active sandbox tier, and whether tokens verify
 ```
+
+`make run` listens on every interface, so on a shared network anybody who can reach the
+port can try a token; bind it to `127.0.0.1` (`uv run uvicorn app.main:app --port 8008`)
+when that matters. `/ready` answers 503 until keyring's keys can be fetched.
 
 Token verification and credential resolution use `keyring-client`, and per-person settings
 use `settings-client`. Both come from their owning repositories as tagged git sources
@@ -25,8 +30,9 @@ is needed. Where those repositories are private, git needs your GitHub credentia
 
 Without a keyring to hand, `uv run python scripts/dev_keyring.py` serves a stand-in on
 `:8001` that mints tokens (`POST /dev/mint {"account_id": "me"}`) and accepts the service
-token `.env.example` sets, and `make smoke` drives the whole API against it. The stand-in is
-keyring's shared test fake, so it refuses what keyring refuses.
+token `.env.example` sets, and `DEV_KEYRING_URL=http://127.0.0.1:8001 make smoke` drives the
+whole API against it (without `DEV_KEYRING_URL` the smoke script needs a `TOKEN` instead).
+The stand-in is keyring's shared test fake, so it refuses what keyring refuses.
 
 ```
 TOKEN=$(curl -s -XPOST localhost:8001/dev/mint -H 'content-type: application/json' \
@@ -63,16 +69,26 @@ curl -s -XPOST localhost:8008/v1/exec -H "Authorization: Bearer $TOKEN" \
 app/
   main.py            app factory, lifespan, reaper task
   settings.py        ENVAPI_* configuration and quota defaults
+  constants.py       headers, name patterns, on-disk names, the frame, the state enums
   errors.py          DomainError → application/problem+json
+  logging.py         structlog configuration
+  middleware.py      request ids and the per-request log line
+  audit.py           the append-only audit log
   keyring/           header rule and one refusal over keyring-client, credential env mapping
   sandbox/           protocol, detection, directory/user/namespace tiers, setup.sh
   shells/            ring buffer, framing, redaction, the Shell process wrapper
   environments/      records, store, quotas, service, reaper logic
   preferences.py     the one place settings-api is spoken to
-  processes.py       /proc listing and the ownership guard
-  files.py paths.py  files API and containment
+  procfs.py          /proc parsing
+  processes.py       process listing and the ownership guard
+  paths.py           resolve-then-check containment
+  files.py           the files API: reads, writes, edits, copies, moves, deletes
+  file_safety.py     descriptor-relative access that never follows a symlink; ETags
+  file_edits.py      exact replacement and unified-patch parsing
+  file_search.py     bounded literal search
   api/               deps, schemas, routes
-docs/                architecture, api, security, sandbox, keyring, testing
+docs/                architecture, api, operations, security, sandbox, keyring, mcp,
+                     testing, adr/
 scripts/             smoke.sh, dev_keyring.py
 tests/               real processes, real files, 100% coverage gate
 ```
@@ -97,7 +113,7 @@ starting, so a typo cannot leave a default silently in place. The ones that matt
 ## Development
 
 ```
-make check    # format, lint, mypy --strict, tests with fail_under = 100
+make check    # format, lint, mypy --strict, import contracts, tests with fail_under = 100
 make test
 make smoke    # end to end against a running service (see scripts/smoke.sh)
 ```
@@ -109,12 +125,17 @@ See `docs/testing.md`.
 ## Docker
 
 ```
-GITHUB_TOKEN="$(gh auth token)" docker build --secret id=github_token,env=GITHUB_TOKEN -t environments-api .
-docker run --privileged -p 8008:8008 -v envapi:/var/lib/envapi \
+make docker   # builds environments-api:local
+docker run --privileged --init -p 8008:8008 -v envapi:/var/lib/envapi \
   -e ENVAPI_KEYRING_BASE_URL=http://keyring:8001 -e ENVAPI_KEYRING_ISSUER=… \
   -e ENVAPI_KEYRING_SERVICE_TOKEN=… \
-  environments-api
+  environments-api:local
 ```
+
+`--init` is not optional in practice. A sandboxed command's children outlive the shell
+that started them and are reparented to PID 1, which in this image is uvicorn and never
+reaps them; without an init they pile up as zombies until the sandbox cannot fork. The
+meta-repo's compose file sets `init: true` for the same reason.
 
 The build fetches `keyring-client` and `settings-client` from their tagged git sources.
 The `github_token` BuildKit secret is only needed when those repositories are private; it
