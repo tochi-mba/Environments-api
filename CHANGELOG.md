@@ -31,6 +31,12 @@ All notable changes to this service are recorded here. The format follows
 
 ### Changed
 
+- `PUT /files/content` writes atomically through a temporary file and returns `{path, size,
+  etag, diff, applied_hunks, rejected_hunks}` with an `ETag` header. `path` is the
+  workspace-relative path written; it was the path as sent.
+- **Breaking:** the files API refuses a path if any part of it as spelled is a symbolic
+  link, even one pointing inside the workspace (400 `path_outside_workspace`), and opens
+  every step by descriptor with `O_NOFOLLOW`. It used to follow links that stayed inside.
 - **Breaking:** the floor is now **Python 3.12**, which CI gates; 3.13 is declared supported.
   `.python-version`, `requires-python`, ruff's `target-version`, mypy's `python_version`,
   the Docker base image and the pre-commit interpreter all moved together, and `uv.lock`
@@ -82,6 +88,22 @@ All notable changes to this service are recorded here. The format follows
 
 ### Added
 
+- File routes under `/v1/environments/{id}/files`, none of which needs a shell:
+  `GET /search` (literal text search, bounded and reporting what it skipped),
+  `POST /edit` (replace exactly one occurrence, returning a unified `diff`),
+  `POST /patch` (apply a single-file unified diff, naming `applied_hunks` and
+  `rejected_hunks`), `POST /directories` (create a directory and its parents),
+  `DELETE /content` (delete a file, or a directory with `recursive=true`; never the
+  workspace root), and `POST /copy` and `POST /move` (one regular file, never onto an
+  existing destination).
+- `GET /files` takes `glob` and `depth` (0 to 10) and lists recursively without following
+  symbolic links.
+- Optimistic concurrency for files: reads and every mutation that produces a file return a
+  strong `ETag` (the SHA-256 of the whole file), and write, edit, patch, copy, move and
+  delete honour `If-Match`. A mismatch, or a file that changes during the operation, is
+  `412 file_changed`.
+- `GET /files/content` returns `is_binary`, `etag` and `next_offset`; binary is decided over
+  the whole file, and a UTF-8 window ends on a character boundary.
 - `ENVAPI_KEYRING_ISSUER` (default `http://127.0.0.1:8001`), which must equal keyring's
   `KEYRING_ISSUER`.
 - `ENVAPI_JWKS_MIN_REFETCH_SECONDS` (default 60, at most 3600).
