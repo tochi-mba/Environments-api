@@ -37,7 +37,7 @@ reads the second.
 | `ENVAPI_JWKS_CACHE_SECONDS` | `3600` | How long keyring's public keys are held before being read again. Held keys keep verifying tokens through a bounded outage. |
 | `ENVAPI_JWKS_MIN_REFETCH_SECONDS` | `60` | Floor between the key fetches an unknown key id may provoke, and between a failed fetch and the next. Not a tuning knob. |
 | `ENVAPI_DEFAULT_PROFILE` | `personal` | Which credential profile is meant when a request names none. |
-| `ENVAPI_API_KEYS` | empty | Optional comma-separated gate in front of everything, for a deployment that wants a second lock. |
+| `ENVAPI_API_KEYS` | empty | Optional comma-separated keys accepted in `X-API-Key`, a gate in front of every `/v1` route (the probes stay open) for a deployment that wants a second lock. |
 | `ENVAPI_OPERATOR_ACCOUNTS` | empty | Accounts allowed to see the operator surface. Keyring puts no roles in tokens, so this is the documented workaround. |
 
 ### Per-person settings
@@ -57,7 +57,7 @@ per-profile cap — clamped to the ceilings below. Every quota stays operator-on
 | --- | --- | --- |
 | `ENVAPI_ROOT` | `./data` | Where environments live. |
 | `ENVAPI_MIN_SANDBOX_TIER` | `directory` | The weakest tier this deployment accepts. |
-| `ENVAPI_ALLOW_NETWORK` | `true` | Whether sandboxed commands may reach the network. |
+| `ENVAPI_ALLOW_NETWORK` | `true` | Whether sandboxed commands may reach the network. Enforced only at the namespace tier; below it, `false` is recorded but not enforced. |
 | `ENVAPI_SHELL_BINARY` | `/bin/bash` | The shell started in an environment. |
 | `ENVAPI_SHELL_IDLE_TTL_SECONDS` | `3600` | How long an idle shell is kept. |
 | `ENVAPI_ENVIRONMENT_IDLE_TTL_SECONDS` | `86400` | How long an idle environment is kept. |
@@ -92,7 +92,8 @@ All operator-owned, all per the unit named.
 ## Running it
 
 ```bash
-make run                                   # uvicorn on :8008
+cp .env.example .env
+make run                                   # uvicorn on :8008, every interface
 curl localhost:8008/ready                  # the sandbox tier and whether tokens verify
 ```
 
@@ -100,8 +101,27 @@ In a container, the sandbox needs privileges the default profile does not grant:
 
 ```bash
 make docker
-docker run --privileged -p 8008:8008 -v envapi:/var/lib/envapi --env-file .env environments-api:local
+docker run --privileged --init -p 8008:8008 -v envapi:/var/lib/envapi \
+  -e ENVAPI_KEYRING_BASE_URL=http://keyring:8001 \
+  -e ENVAPI_KEYRING_ISSUER=http://127.0.0.1:8001 \
+  -e ENVAPI_KEYRING_SERVICE_TOKEN=... \
+  environments-api:local
 ```
+
+The image runs as root (the user and namespace tiers need it to create per-environment
+users) and sets `ENVAPI_ROOT=/var/lib/envapi`, a `VOLUME` there, and
+`ENVAPI_MIN_SANDBOX_TIER=user`. Do not hand it the `.env` copied from `.env.example` with
+`--env-file`: its `ENVAPI_ROOT=./data` and `ENVAPI_MIN_SANDBOX_TIER=directory` override the
+image's, which puts every environment outside the volume and lets the container start at
+the weakest tier. Pass the keyring settings on their own, as above.
+
+`--init` matters as much as `--privileged`. The children a sandboxed command leaves behind
+are reparented to PID 1, which is uvicorn, and uvicorn never reaps them; without an init
+process they accumulate as zombies until the sandbox answers every command with
+`fork: Resource temporarily unavailable`. The meta-repo's compose file sets `init: true`.
+
+The image declares no `HEALTHCHECK`; point the orchestrator's liveness check at `/healthy`
+(the meta-repo's compose file does).
 
 `--privileged` is why this service documents its own deployment rather than inheriting the
 family's: every sibling's image runs unprivileged, and this one cannot.
@@ -122,8 +142,10 @@ verified here.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Startup fails naming variables | A typo, or a setting that does not exist | The message names every offender. |
-| Startup fails on the sandbox tier | The host cannot reach `MIN_SANDBOX_TIER` | Grant the container the privileges, or lower the floor deliberately. |
-| Every request 401 | `KEYRING_ISSUER` or `KEYRING_SERVICE_NAME` disagrees with keyring | Make both match keyring's configuration. |
+| Startup fails on the sandbox tier | The host cannot reach `ENVAPI_MIN_SANDBOX_TIER` | Grant the container the privileges, or lower the floor deliberately. |
+| Every request 401 | `ENVAPI_KEYRING_ISSUER` or `ENVAPI_KEYRING_SERVICE_NAME` disagrees with keyring, or `ENVAPI_API_KEYS` is set and the caller sends no `X-API-Key` | Make the issuer equal keyring's `KEYRING_ISSUER` and mint tokens for the service name; send the API key. |
 | `/ready` says keyring unreachable | The key document cannot be fetched | Check the URL is reachable from this host; held keys keep working for a bounded grace. |
-| A command cannot get its credential | No `KEYRING_SERVICE_TOKEN`, or the profile has no such connection | Register this service in keyring and connect the service on that profile. |
+| A command cannot get its credential | No `ENVAPI_KEYRING_SERVICE_TOKEN`, or the profile has no such connection (listed in `credentials_missing`) | Register this service in keyring and connect the service on that profile. |
 | Exec output looks corrupted | Redaction replaced a value that also appears in ordinary output | Expected: a credential's value is scrubbed wherever it appears. |
+| Commands fail with `fork: Resource temporarily unavailable` after hours of use | Zombie processes under PID 1 in a container started without an init | Run with `--init` (compose: `init: true`). |
+| Environments vanish after a container restart | `ENVAPI_ROOT` points outside the volume, often `./data` from a copied `.env` | Set `ENVAPI_ROOT=/var/lib/envapi` (the image default) and mount a volume there. |
