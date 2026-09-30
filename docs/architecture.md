@@ -13,11 +13,15 @@ from that.
 | `app/keyring/` | This service's side of `keyring-client`: which header carries the user token, one refusal for every rejected token, and keyring's credential answer as environment variables. |
 | `app/sandbox/` | The `Sandbox` protocol, capability detection, and the three tiers. |
 | `app/paths.py`, `app/files.py` | Resolve-then-check path containment and the files API. |
+| `app/file_safety.py` | Descriptor-relative access with `O_NOFOLLOW` at every step, the whole-file `ETag`, and `If-Match`. |
+| `app/file_edits.py`, `app/file_search.py` | Exact replacement and unified-patch parsing; bounded literal search. |
 | `app/shells/` | Ring buffer, command framing, secret redaction, and the `Shell` process wrapper. |
 | `app/procfs.py`, `app/processes.py` | `/proc` inspection and the process-ownership guard. |
 | `app/preferences.py` | The one place settings-api is spoken to. Per-person idle TTLs, the per-profile cap, and `common.default_profile`. |
 | `app/environments/` | Durable records, the on-disk store, quotas, the orchestrating service, and the reaper's work. |
 | `app/audit.py` | Append-only JSON-lines log of every privileged action. |
+| `app/constants.py` | Header names, name patterns, on-disk names, the command frame, and the state enums. |
+| `app/logging.py`, `app/middleware.py` | structlog configuration; a request id bound to every log line and echoed as `X-Request-ID`. |
 | `app/api/` | Dependencies, request schemas, routes. |
 | `app/main.py` | App factory and lifespan: probe the host, build the sandbox, load and reconcile, start the reaper. |
 
