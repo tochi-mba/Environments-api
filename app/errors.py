@@ -7,12 +7,14 @@ stable ``code`` that clients can switch on.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.constants import PROBLEM_JSON
 
@@ -73,6 +75,26 @@ class NotFoundError(DomainError):
     status = 404
     code = "not_found"
     title = "Not found"
+
+
+class MethodNotAllowedError(DomainError):
+    """The path exists but does not accept this HTTP method."""
+
+    status = 405
+    code = "method_not_allowed"
+    title = "Method not allowed"
+
+
+class HttpError(DomainError):
+    """Any other HTTP error the framework raises itself; carries the framework's status."""
+
+    code = "http_error"
+    title = "HTTP error"
+
+    def __init__(self, status: int, detail: str) -> None:
+        """Keep the framework's ``status`` and its ``detail``."""
+        super().__init__(detail)
+        self.status = status
 
 
 class ConflictError(DomainError):
@@ -174,8 +196,21 @@ class SandboxError(DomainError):
     title = "Sandbox error"
 
 
-def _problem_response(problem: dict[str, Any]) -> JSONResponse:
-    return JSONResponse(problem, status_code=int(problem["status"]), media_type=PROBLEM_JSON)
+def _problem_response(
+    problem: dict[str, Any], headers: Mapping[str, str] | None = None
+) -> JSONResponse:
+    return JSONResponse(
+        problem, status_code=int(problem["status"]), media_type=PROBLEM_JSON, headers=headers
+    )
+
+
+def _from_http(exc: StarletteHTTPException) -> DomainError:
+    detail = str(exc.detail)
+    if exc.status_code == 404:
+        return NotFoundError(detail)
+    if exc.status_code == 405:
+        return MethodNotAllowedError(detail)
+    return HttpError(exc.status_code, detail)
 
 
 def install_error_handlers(app: FastAPI) -> None:
@@ -184,6 +219,13 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def _domain(request: Request, exc: DomainError) -> JSONResponse:
         return _problem_response(exc.to_problem(str(request.url.path)))
+
+    # Routing raises these itself for a path nothing serves (404) or a method a path does
+    # not take (405); without this they would be FastAPI's plain {"detail": ...} JSON.
+    @app.exception_handler(StarletteHTTPException)
+    async def _http(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        problem = _from_http(exc).to_problem(str(request.url.path))
+        return _problem_response(problem, exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:

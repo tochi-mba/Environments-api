@@ -888,3 +888,31 @@ async def test_a_bad_token_does_not_ask_settings_api(
         )
         assert response.status_code == 401
         assert fake.resolves == 0
+
+
+async def test_unrouted_paths_and_methods_are_problem_json(client: httpx.AsyncClient) -> None:
+    response = await client.get("/v1/no-such-route")
+    assert response.status_code == 404
+    body = problem(response)
+    assert body["code"] == "not_found" and body["instance"] == "/v1/no-such-route"
+    response = await client.patch("/health")
+    assert response.status_code == 405
+    assert problem(response)["code"] == "method_not_allowed"
+    assert response.headers["allow"] == "GET"
+
+
+async def test_any_other_framework_http_error_is_problem_json(
+    client: httpx.AsyncClient,
+) -> None:
+    from fastapi import HTTPException
+
+    app = client.app  # type: ignore[attr-defined]
+
+    async def teapot() -> None:
+        raise HTTPException(status_code=418, detail="short and stout")
+
+    app.add_api_route("/__teapot", teapot)
+    response = await client.get("/__teapot")
+    body = problem(response)
+    assert response.status_code == 418 and body["code"] == "http_error"
+    assert body["detail"] == "short and stout"
