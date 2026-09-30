@@ -23,7 +23,7 @@ them as reported claims with the environment id and path inline. Do not concaten
 | Expose | Why |
 | --- | --- |
 | List / get / summary / usage of environments | Cheap orientation. Another account's environment is 404. |
-| File list, read, search, write, edit, patch | The confined workspace. Reads return numbered windows; edits refuse a stale fingerprint. |
+| File list, read, search, write, edit, patch | The confined workspace. Reads return bounded byte windows with an `ETag`, and search returns numbered lines; an edit sent with that `ETag` in `If-Match` is refused (412) if the file has changed since. |
 | `POST /v1/exec` | One command in an ephemeral shell. Bounded. The model-facing shape. |
 | Persistent shells and their commands | When a session needs `cd` and env to stick. Output is redacted before it is stored. |
 
