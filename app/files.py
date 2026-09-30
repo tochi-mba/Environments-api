@@ -11,12 +11,23 @@ import shutil
 import stat
 import threading
 import uuid
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.errors import ConflictError, NotFoundError, ValidationError
 from app.file_edits import apply_patch, replace_unique, unified_diff
 from app.file_safety import check_match, current_etag, metadata, open_file, parent_fd, relative_path
+
+# Given the bytes a mutation will add to the workspace (negative when it shrinks a file), a
+# context entered before anything is created and held until the mutation is committed:
+# EnvironmentService.admit_write, which refuses it when the disk quota would be exceeded.
+Admit = Callable[[int], AbstractContextManager[None]]
+
+
+def _admit(admit: Admit | None, growth: int) -> AbstractContextManager[None]:
+    return nullcontext() if admit is None else admit(growth)
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,15 +212,41 @@ class FileService:
         mode: str,
         owner: tuple[int, int] | None,
         if_match: str | None = None,
+        admit: Admit | None = None,
     ) -> Mutation:
-        """Atomically write a file, creating parents and optionally comparing its ETag."""
+        """Atomically write a file, creating parents and optionally comparing its ETag.
+
+        ``admit`` is asked about the bytes the write adds before any directory or file is
+        created, so a refused write leaves nothing behind.
+        """
         data = self._data(content, encoding)
         if mode not in ("overwrite", "append"):
             raise ValidationError("unsupported mode")
         relative = relative_path(workspace, requested)
         if relative == "." or (workspace / relative).is_dir():
             raise ValidationError("The requested path is a directory")
-        with self._lock, parent_fd(workspace, relative, create=True, owner=owner) as (parent, name):
+        with self._lock:
+            growth = len(data) if mode == "append" else len(data) - self._size(workspace, relative)
+            with _admit(admit, growth):
+                return self._write(workspace, relative, data, mode, owner, if_match)
+
+    def _size(self, workspace: Path, relative: str) -> int:
+        try:
+            with parent_fd(workspace, relative) as (parent, name):
+                return os.stat(name, dir_fd=parent, follow_symlinks=False).st_size
+        except NotFoundError:
+            return 0
+
+    def _write(
+        self,
+        workspace: Path,
+        relative: str,
+        data: bytes,
+        mode: str,
+        owner: tuple[int, int] | None,
+        if_match: str | None,
+    ) -> Mutation:
+        with parent_fd(workspace, relative, create=True, owner=owner) as (parent, name):
             expected = if_match
             if mode == "append" and current_etag(parent, name) is not None:
                 with open_file(parent, name) as handle:
@@ -243,13 +280,14 @@ class FileService:
         new_string: str,
         owner: tuple[int, int] | None,
         if_match: str | None = None,
+        admit: Admit | None = None,
     ) -> Mutation:
         """Replace one exact occurrence, returning the committed diff and ETag."""
         with self._lock:
             content = self._editable(workspace, requested, if_match)
             new = replace_unique(content.content, old_string, new_string)
             changed = self.write_result(
-                workspace, requested, new, "utf-8", "overwrite", owner, content.etag
+                workspace, requested, new, "utf-8", "overwrite", owner, content.etag, admit
             )
             return Mutation(
                 changed.path,
@@ -265,13 +303,14 @@ class FileService:
         patch: str,
         owner: tuple[int, int] | None,
         if_match: str | None = None,
+        admit: Admit | None = None,
     ) -> Mutation:
         """Apply matching unified hunks; rejected hunks remain visible in the response."""
         with self._lock:
             content = self._editable(workspace, requested, if_match)
             new, applied, rejected = apply_patch(content.content, patch)
             changed = self.write_result(
-                workspace, requested, new, "utf-8", "overwrite", owner, content.etag
+                workspace, requested, new, "utf-8", "overwrite", owner, content.etag, admit
             )
             return Mutation(
                 changed.path,
@@ -340,6 +379,7 @@ class FileService:
         move: bool,
         owner: tuple[int, int] | None,
         if_match: str | None = None,
+        admit: Admit | None = None,
     ) -> Mutation:
         """Copy or move a bounded regular file; existing destinations are never overwritten."""
         source_path = relative_path(workspace, source)
@@ -351,9 +391,13 @@ class FileService:
                 if size > self._max_write:
                     raise ValidationError("File exceeds max_file_write_bytes", size=size)
                 data = handle.read()
-            with parent_fd(workspace, destination_path, create=True, owner=owner) as (
-                dest_fd,
-                dest_name,
+            # A move takes as much space as it gives back.
+            with (
+                _admit(admit, 0 if move else size),
+                parent_fd(workspace, destination_path, create=True, owner=owner) as (
+                    dest_fd,
+                    dest_name,
+                ),
             ):
                 try:
                     descriptor = os.open(

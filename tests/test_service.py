@@ -136,7 +136,7 @@ def test_disk_quota_refuses_new_work(service: EnvironmentService, settings: Sett
     for call in (
         lambda: service.open_shell(ALICE, record.id, ".", {}, False),
         lambda: service.exec(ALICE, shell.id, "true", None, []),
-        lambda: service.note_write(ALICE, record.id, "f", 1),
+        lambda: service.admit_write(ALICE, record.id, 1).__enter__(),
     ):
         with pytest.raises(QuotaExceededError) as info:
             call()

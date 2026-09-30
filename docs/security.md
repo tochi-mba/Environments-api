@@ -75,7 +75,9 @@ Listings report symlinks as `kind: "symlink"` and do not descend into them.
 Note that `RLIMIT_NPROC` only bites at the user and namespace tiers, where each
 environment has its own uid; as root at the directory tier it is not enforced by the
 kernel. Disk is bounded by a periodic scan, so a single command can overshoot between
-scans; real filesystem quotas would be exact at the cost of setup.
+scans; real filesystem quotas would be exact at the cost of setup. The files API cannot
+overshoot: a write, edit, patch or copy is weighed against `max_disk_bytes` before it
+creates anything, counting the bytes it adds, and is refused with nothing left behind.
 
 ## Audit
 

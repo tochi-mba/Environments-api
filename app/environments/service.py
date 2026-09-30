@@ -12,7 +12,7 @@ import os
 import signal
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -449,13 +449,41 @@ class EnvironmentService:
                 )
             return self._store.workspace(record), self._sandbox.owner(record.id)
 
-    def note_write(self, caller: Caller, environment_id: str, path: str, size: int) -> None:
-        """Record a file write: activity for the reaper, an entry for the audit log."""
+    @contextlib.contextmanager
+    def admit_write(self, caller: Caller, environment_id: str, growth: int) -> Iterator[None]:
+        """Hold ``growth`` bytes of the disk quota for a file mutation while it is made.
+
+        Entered before the mutation creates anything: one that would take the environment
+        past ``max_disk_bytes`` is refused there, so it never reaches the disk. The bytes are
+        counted on entry, so two writes at once cannot both fit into the same room, and are
+        given back if the mutation fails. A mutation that adds nothing (a move, a shrinking
+        overwrite) is always admitted and frees nothing until the reaper next measures.
+
+        Raises:
+            QuotaExceededError: If the environment's usage plus ``growth`` is over the quota.
+        """
+        reserved = max(growth, 0)
         with self._lock:
             record = self._owned(caller, environment_id)
             quotas = self._quotas.effective(caller.account_id)
-            self._check_disk(record, quotas)
-            self._usage[record.id] = self._usage.get(record.id, 0) + size
+            used = self._usage.get(record.id, 0)
+            if reserved and used + reserved > quotas.max_disk_bytes:
+                raise QuotaExceededError("max_disk_bytes", used + reserved, quotas.max_disk_bytes)
+            self._usage[record.id] = used + reserved
+        try:
+            yield
+        except BaseException:
+            with self._lock:
+                self._usage[record.id] = max(self._usage.get(record.id, 0) - reserved, 0)
+            raise
+
+    def note_write(self, caller: Caller, environment_id: str, path: str, size: int) -> None:
+        """Record a file write: activity for the reaper, an entry for the audit log.
+
+        The bytes were counted against the quota by :meth:`admit_write` before the write.
+        """
+        with self._lock:
+            record = self._owned(caller, environment_id)
             self._touch(record)
         self._audit.record(
             "file.write", caller.account_id, environment_id=environment_id, path=path, bytes=size

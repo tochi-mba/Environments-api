@@ -101,5 +101,10 @@ All notable changes to this service are recorded here. The format follows
   waited for the shell to go idle and retried would never succeed.
 - Deleting a file or directory and creating a directory through the files API are audited,
   as `file.delete` (with `recursive`) and `file.mkdir`, like every other file mutation.
+- The files API checks `max_disk_bytes` before it writes. The check ran after the file was
+  on disk and ignored the bytes just written, so a write could take an environment past its
+  quota, and a write that was refused with `quota_exceeded` had already been made. Write,
+  edit, patch and copy now count the bytes they add first and are refused with nothing
+  created, not even a parent directory; a move or a write that adds nothing is admitted.
 - `POST /v1/exec` echoes `command` as the caller sent it. It echoed the subshell the route
   wraps it in, `( <command>\n)`, which a model was then shown as the command it had run.
