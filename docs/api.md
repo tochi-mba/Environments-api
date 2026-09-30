@@ -192,9 +192,9 @@ they account for every byte the command wrote before the read.
 | `method_not_allowed` | 405 | A route that does not take this method; `Allow` lists the ones it does |
 | `path_outside_workspace` | 400 | A path that escapes the workspace or goes through a symlink |
 | `file_changed` | 412 | `If-Match` did not match the file, or the file changed during the operation |
-| `validation_error` | 422 | The request broke a rule; request-shape failures carry `errors` |
-| `conflict` | 409 | Generic conflict, such as a copy or move onto an existing file |
-| `shell_busy` | 409 | A command is already running in the shell (carries its `command_id`). Also, today, a command over 1 MiB (carries `limit`) and `target: "tty"` on a shell opened without `pty` |
+| `validation_error` | 422 | The request broke a rule; request-shape failures carry `errors`, and a command over 1 MiB carries `limit` |
+| `conflict` | 409 | Generic conflict, such as a copy or move onto an existing file, or `target: "tty"` on a shell opened without `pty` |
+| `shell_busy` | 409 | A command is already running in the shell (carries its `command_id`) |
 | `shell_not_running` | 409 | The shell has exited |
 | `environment_archived` | 409 | The environment was archived for idleness; `reset` revives it |
 | `network_disabled` | 409 | `network: true` on a deployment with `ENVAPI_ALLOW_NETWORK=false` |

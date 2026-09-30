@@ -916,3 +916,21 @@ async def test_any_other_framework_http_error_is_problem_json(
     body = problem(response)
     assert response.status_code == 418 and body["code"] == "http_error"
     assert body["detail"] == "short and stout"
+
+
+async def test_only_a_running_command_is_shell_busy(
+    client: httpx.AsyncClient, keyring: FakeKeyring
+) -> None:
+    alice = auth_headers(keyring, "alice")
+    env = await create_env(client, alice)
+    sid = (await open_shell(client, alice, env["id"]))["id"]
+    response = await client.post(
+        f"/v1/shells/{sid}/exec", json={"command": "x" * (2 << 20)}, headers=alice
+    )
+    body = problem(response)
+    assert response.status_code == 422 and body["code"] == "validation_error"
+    assert body["limit"] == 1024 * 1024
+    response = await client.post(
+        f"/v1/shells/{sid}/stdin", json={"data": "x", "target": "tty"}, headers=alice
+    )
+    assert response.status_code == 409 and problem(response)["code"] == "conflict"
