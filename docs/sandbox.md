@@ -7,8 +7,8 @@ running real probes (`app/sandbox/detect.py`), not by trusting configuration.
 | Tier | Requires | Gives |
 |---|---|---|
 | `directory` | nothing | Workspace cwd, minimal environment, POSIX rlimits. Not a security boundary. |
-| `user` | root, `useradd`/`userdel` | A system user per environment (`envapi_<id>`), workspace chowned to it, privileges dropped before exec. Ordinary permissions do the isolating and `RLIMIT_NPROC` becomes meaningful. |
-| `namespace` | a usable `unshare` (plus `setpriv` and `useradd` when root) | Mount + PID namespaces: root filesystem remounted read-only, the workspace bind-mounted back read-write, a private tmpfs on `/tmp`, `/proc` showing only the environment's processes, and no network namespace at all when egress is disabled. As root it also drops to the per-environment user; rootless it uses a user namespace instead. |
+| `user` | root, `useradd`/`userdel` | A system user per environment (`envapi_` plus the environment id without its `env_` prefix), workspace chowned to it, privileges dropped before exec. Ordinary permissions do the isolating and `RLIMIT_NPROC` becomes meaningful. |
+| `namespace` | a usable `unshare` (plus `setpriv` and `useradd` when root) | Mount + PID namespaces: root filesystem remounted read-only, the workspace bind-mounted back read-write, a private 256 MiB tmpfs on `/tmp`, `/proc` showing only the environment's processes, and no network namespace at all when egress is disabled. As root it also drops to the per-environment user; rootless it uses a user namespace instead. |
 
 The probe for the namespace tier does what the tier does: it unshares mount and pid
 namespaces and remounts `/` read-only inside. A Docker seccomp profile that leaves
@@ -48,7 +48,7 @@ ROOT/                     0711 root
 └── accounts/<acct>/<profile>/<env>/   0711 root  (traversable, not listable)
     ├── environment.json  0600 root
     ├── logs/             0755 root  (written by the service only)
-    └── workspace/        0755 envapi_<id>
+    └── workspace/        0755 envapi_<id without env_>
 ```
 
 ## Network
