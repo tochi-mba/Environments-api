@@ -69,7 +69,8 @@ operator's.
 
 ### Quotas
 
-All operator-owned, all per the unit named.
+All operator-owned, all per the unit named. Each can be overridden per account through
+`PUT /v1/admin/quotas/{account}` except the two file-API caps.
 
 | Variable | Default |
 | --- | --- |
@@ -81,7 +82,7 @@ All operator-owned, all per the unit named.
 | `ENVAPI_MAX_DISK_BYTES` | 5 GiB |
 | `ENVAPI_MAX_CPU_SECONDS` | `900` |
 | `ENVAPI_MAX_FILE_SIZE_BYTES` | 512 MiB |
-| `ENVAPI_MAX_FILE_READ_BYTES` / `_WRITE_BYTES` | 1 MiB / 16 MiB |
+| `ENVAPI_MAX_FILE_READ_BYTES` / `_WRITE_BYTES` | 1 MiB / 16 MiB (deployment-wide; not overridable per account) |
 | `ENVAPI_MAX_OUTPUT_BUFFER_BYTES` | 1 MiB |
 | `ENVAPI_MAX_COMMAND_LOG_BYTES` | 32 MiB |
 
