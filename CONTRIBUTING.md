@@ -10,7 +10,8 @@ therefore runs on Linux only — in CI, in WSL2, in the family devcontainer, or 
 privileged container:
 
 ```bash
-docker run --rm --privileged -v "$PWD":/app -w /app python:3.11 bash -lc 'make install && make check'
+docker run --rm --privileged -v "$PWD":/app -w /app python:3.12 \
+  bash -lc 'pip install uv && make install && make check'
 ```
 
 On Windows or macOS you can still run the parts that do not touch the sandbox:

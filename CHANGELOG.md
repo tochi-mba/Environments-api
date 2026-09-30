@@ -23,7 +23,7 @@ All notable changes to this service are recorded here. The format follows
 
 ### Changed
 
-- **Breaking:** the floor is now **Python 3.12** (CI runs 3.12 and 3.13).
+- **Breaking:** the floor is now **Python 3.12**, which CI gates; 3.13 is declared supported.
   `.python-version`, `requires-python`, ruff's `target-version`, mypy's `python_version`,
   the Docker base image and the pre-commit interpreter all moved together, and `uv.lock`
   was regenerated. The family-wide reason is in the meta-repo's

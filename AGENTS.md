@@ -12,10 +12,12 @@ security change.
 
 ## Conventions
 
-* Python 3.11, `uv`, FastAPI, httpx, structlog, pytest + pytest-asyncio, ruff,
-  `mypy --strict`, and `keyring-client` from the sibling `../Keyring-api` checkout for
-  everything that believes a keyring token or fetches a credential. Line length 100;
-  `ruff format` decides formatting.
+* Python 3.12, `uv`, FastAPI, httpx, structlog, pytest + pytest-asyncio, ruff,
+  `mypy --strict`, and import-linter. `keyring-client` does everything that believes a
+  keyring token or fetches a credential, and `settings-client` reads per-person settings;
+  both come from their owning repositories as tagged git sources (`[tool.uv.sources]` in
+  `pyproject.toml`), never as a vendored copy. Line length 100; `ruff format` decides
+  formatting.
 * Google-style docstrings on every public module, class and function.
 * Comments explain *why*, never *what*. A comment that restates the code is deleted; one
   that records a constraint, a trade-off or a non-obvious failure earns its place.
@@ -25,7 +27,8 @@ security change.
   `app.dependency_overrides`, never by monkeypatching internals.
 * Coverage gate at 100% (`fail_under = 100`). Permitted exclusions: `if TYPE_CHECKING:`,
   protocol bodies (`...`), `if __name__ == "__main__":`. Nothing else.
-* `make check` = format check, lint, types, tests with the gate. CI runs the same command.
+* `make check` = format check, lint, types, import contracts, tests with the gate. CI runs
+  the same command.
 
 ## Testing rules
 
