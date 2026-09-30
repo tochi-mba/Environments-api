@@ -10,8 +10,9 @@ startup (see [ADR-0001](adr/0001-sandbox-tiers.md)); `/ready` reports the tier i
 
 - **Linux.** The sandbox needs `unshare`, `setpriv`, `useradd` and `/proc`. There is no
   Windows or macOS deployment, and the full test suite runs on Linux only.
-- **A writable data root** (`ENVAPI_ROOT`), on a filesystem that supports the quotas you
-  configure.
+- **A writable data root** (`ENVAPI_ROOT`) with room for the disk quotas you configure.
+  `ENVAPI_MAX_DISK_BYTES` is enforced by a periodic scan, not by filesystem quotas, so any
+  filesystem works and a single command can overshoot between scans.
 - Set `ENVAPI_MIN_SANDBOX_TIER` to the weakest tier the deployment may run at. A host that
   cannot reach it fails startup, which is the point: a weakly isolated deployment must not
   be indistinguishable from a strong one.
@@ -49,7 +50,9 @@ reads the second.
 
 Both or neither: half a configuration is a startup error. With them set, creating an
 environment reads that person's `environments` namespace — idle lifetimes and the
-per-profile cap — clamped to the ceilings below. Every quota stays operator-only.
+per-profile cap — clamped to the ceilings below. A person can lower those three for
+themselves and never raise them; every ceiling, and every other quota, stays the
+operator's.
 
 ### Sandbox and shells
 
