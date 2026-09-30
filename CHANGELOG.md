@@ -32,7 +32,8 @@ All notable changes to this service are recorded here. The format follows
   parameters that do not parse on 3.11. Generics here moved to PEP 695 syntax with it.
 - Keep shell scripts LF-terminated on Windows checkouts so Linux image builds can run
   the namespace sandbox without shell parsing failures.
-- CI inherits `FAMILY_GITHUB_TOKEN`; image builds accept a BuildKit `github_token`
+- CI gets a short-lived family token from the OIDC broker (`id-token: write`) instead of
+  inheriting a shared secret; image builds accept a BuildKit `github_token`
   secret so tagged client packages can be fetched from private family repositories.
   `make docker` uses the signed-in GitHub account without saving its token in an image.
 - **Breaking:** `Authorization: Bearer <keyring user token>` is the canonical way to present
