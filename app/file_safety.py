@@ -10,15 +10,20 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
-from urllib.parse import unquote
 
 from app.errors import NotFoundError, PathEscapeError, PreconditionError, ValidationError
 from app.paths import relative_to_workspace, resolve_within
 
 
 def relative_path(workspace: Path, requested: str) -> str:
-    """Canonicalise separators and reject aliases through links before resolving."""
-    requested = unquote(requested).replace("\\", "/")
+    """Canonicalise separators and reject aliases through links before resolving.
+
+    ``requested`` is used as it arrives. The framework has already decoded the query string,
+    and a JSON body is not URL-encoded at all; decoding again would let ``%2e%2e`` or
+    ``%2F`` turn into ``..`` or ``/`` after the caller's spelling was chosen, and would make a
+    file whose name contains ``%`` impossible to address.
+    """
+    requested = requested.replace("\\", "/")
     root = workspace.resolve()
     resolved = resolve_within(root, requested)
     # Inspect the spelling too: resolving first must not turn an in-root symlink into

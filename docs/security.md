@@ -61,6 +61,11 @@ the way down and the file itself by descriptor with `O_NOFOLLOW`. A link a shell
 between the check and the open therefore fails the open rather than being followed.
 Listings report symlinks as `kind: "symlink"` and do not descend into them.
 
+A path is decoded exactly once, by the framework, from the query string; a JSON body is
+not decoded at all. `%2e%2e` or `%2F` that reaches the service is therefore part of a
+name, never `..` or a separator: a traversal encoded once in the URL arrives as `../` and
+is refused, and one encoded twice is a literal file name inside the workspace.
+
 ## Signals
 
 * Signalling a pid verifies it belongs to the environment by walking its ancestry in
