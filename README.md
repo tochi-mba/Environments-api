@@ -108,7 +108,7 @@ starting, so a typo cannot leave a default silently in place. The ones that matt
 | `ENVAPI_ALLOW_NETWORK` | Default egress; only enforced at the namespace tier. |
 | `ENVAPI_OPERATOR_ACCOUNTS` | Comma-separated account ids allowed to use `/v1/admin`. |
 | `ENVAPI_API_KEYS` | Optional front-door keys for `X-API-Key`. |
-| `ENVAPI_MAX_*`, `*_IDLE_TTL_SECONDS` | Quotas; per-account overrides via `/v1/admin/quotas`. Person-lowerable idle TTLs and the per-profile cap are also in settings-api (`environments`); unset `ENVAPI_SETTINGS_API_BASE_URL` keeps today's behaviour. |
+| `ENVAPI_MAX_*`, `*_IDLE_TTL_SECONDS` | Quotas; per-account overrides via `/v1/admin/quotas`, except `ENVAPI_MAX_FILE_READ_BYTES` and `ENVAPI_MAX_FILE_WRITE_BYTES`, which are deployment-wide. Person-lowerable idle TTLs and the per-profile cap are also in settings-api (`environments`); unset `ENVAPI_SETTINGS_API_BASE_URL` keeps today's behaviour. |
 
 ## Development
 
