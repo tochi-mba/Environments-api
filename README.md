@@ -1,5 +1,7 @@
 # environments-api
 
+A REX Technologies product. Site: <https://tochi-mba.github.io/Environments-api/>
+
 Sandboxed environments and shells, as an API. It is a service in the
 [LUCY](https://github.com/tochi-mba/LUCY-assistant) family and authenticates against
 [keyring](https://github.com/tochi-mba/Keyring-api): it creates isolated workspaces, runs

@@ -88,6 +88,12 @@ All notable changes to this service are recorded here. The format follows
 
 ### Added
 
+- A GitHub Pages site at <https://tochi-mba.github.io/Environments-api/>, in the REX ink/signal style: what Environments-api is,
+  its API, how to run it and what it will not do. `site/` is plain static HTML;
+  `.github/workflows/pages.yml` publishes it after `scripts/check_site.py` has checked every
+  page for a broken anchor, a missing asset, an image without alt text or draft text.
+- The repository is attributed to REX Technologies: the LICENSE copyright holder, the package
+  author and the README.
 - File routes under `/v1/environments/{id}/files`, none of which needs a shell:
   `GET /search` (literal text search, bounded and reporting what it skipped),
   `POST /edit` (replace exactly one occurrence, returning a unified `diff`),
