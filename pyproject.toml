@@ -2,6 +2,8 @@
 name = "environments-api"
 version = "0.1.0"
 description = "Sandboxed environments and shells, as an API."
+license = { text = "MIT" }
+authors = [{ name = "REX Technologies" }]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -62,6 +64,8 @@ python_version = "3.12"
 platform = "linux"
 warn_unreachable = true
 files = ["app", "tests"]
+# `scripts` is on the path so the tests can import the site checker they exercise.
+mypy_path = "scripts"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

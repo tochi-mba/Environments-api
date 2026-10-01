@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Environments-api creates isolated workspaces, runs shells in them, reports what is running, and lets an assistant wait on it or kill it. The sandbox tiers, path containment and process-ownership checks are the feature. A REX Technologies product.">
+<meta name="robots" content="index,follow">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#080A09">
+<meta property="og:title" content="Environments-api — sandboxed workspaces and shells, as an API — REX Technologies">
+<meta property="og:description" content="Environments-api creates isolated workspaces, runs shells in them, reports what is running, and lets an assistant wait on it or kill it. The sandbox tiers, path containment and process-ownership checks are the feature. A REX Technologies product.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tochi-mba.github.io/Environments-api/">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://tochi-mba.github.io/Environments-api/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.classList.replace("no-js","js");</script>
+<noscript><style>@media(max-width:760px){.site-nav{display:flex!important;position:static!important;flex-direction:column}.menu-button{display:none!important}}</style></noscript>
+<title>Environments-api — sandboxed workspaces and shells, as an API — REX Technologies</title>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="ambient ambient-one" aria-hidden="true"></div>
+<div class="ambient ambient-two" aria-hidden="true"></div>
+
+<header class="site-header">
+  <div class="container nav-wrap">
+    <a class="brand" href="#top" aria-label="Environments-api, by REX Technologies">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="5" y="7" width="22" height="18" rx="3"/><path d="M10 13l4 3-4 3M17 19h5"/></svg></span>
+      <span class="brand-lockup"><span class="brand-company">REX Technologies</span><span class="brand-name">Environments-api</span></span>
+    </a>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav"><span class="sr-only">Toggle navigation</span><span></span><span></span></button>
+    <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
+      <a href="#how">How it works</a>
+      <a href="#api">The API</a>
+      <a href="#install">Run it</a>
+      <a href="#limits">Read before deploying</a>
+      <a href="#docs">Docs</a>
+      <a class="nav-github" href="https://github.com/tochi-mba/Environments-api">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero container" id="top">
+    <div class="hero-copy">
+      <p class="eyebrow signal">Sandboxes · shells · files</p>
+      <h1>Remote code execution, with the <span>containment</span> as the product.</h1>
+      <p class="hero-lede">It creates isolated workspaces, runs shells in them, reports what is running, and lets an assistant kill or wait on it. This service executes arbitrary commands for remote callers, so the sandbox is the feature, not polish.</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="#install">Run it on your machine</a>
+        <a class="button button-secondary" href="https://github.com/tochi-mba/Environments-api">Source on GitHub</a>
+      </div>
+      <div class="hero-meta">
+        <span>Python 3.12+</span>
+        <span>Serves on :8008</span>
+        <span>Tokens from keyring</span>
+        <span>MIT licensed</span>
+      </div>
+    </div>
+    <pre class="console" aria-label="Creating an environment and running a command"><code><span class="k">POST</span> /v1/environments   {"name": "scratch"}
+<span class="k">POST</span> /v1/exec           {"environment_id": "env_…", "command": "uname -a"}
+
+<span class="k">GET</span>  /ready             the active sandbox tier, and whether tokens verify
+
+<span class="you"># tiers, strongest the host allows:</span>
+directory -&gt; user -&gt; <span class="k">namespace</span></code></pre>
+  </section>
+
+  <section class="trust-strip">
+    <div class="container trust-grid">
+      <div><strong>Layered sandbox</strong><span>Directory, user, namespace: the strongest the host allows, and reported.</span></div>
+      <div><strong>No symlink followed</strong><span>Paths are resolved, then checked; a stale edit is refused.</span></div>
+      <div><strong>Signals check ownership</strong><span>A process is signalled only if it belongs to the environment by ancestry.</span></div>
+      <div><strong>Everything audited</strong><span>Every command and privileged action is logged.</span></div>
+    </div>
+  </section>
+
+  <section class="section container" id="how">
+    <div class="section-heading">
+      <p class="eyebrow signal">How it works</p>
+      <h2>Environments survive restarts. Shells do not, and the API says so.</h2>
+      <p>It authenticates against <a href="https://tochi-mba.github.io/Keyring-api/">keyring</a>. Read the security guide before deploying it.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <span class="step-number">01</span>
+        <h3>Environments</h3>
+        <p>Several per account and profile, bounded by quotas; a 409 names the limit. Each is a folder that survives a restart.</p>
+      </div>
+      <div class="step">
+        <span class="step-number">02</span>
+        <h3>Shells and commands</h3>
+        <p>Concurrent persistent shells per environment. Commands are framed with a random nonce so exit codes can be trusted, and <code>exec</code> with <code>wait_ms</code> returns fast results in one call.</p>
+      </div>
+      <div class="step">
+        <span class="step-number">03</span>
+        <h3>A reaper</h3>
+        <p>It closes idle shells, archives idle environments and prunes logs. With settings-api configured, each person's idle lifetimes are honoured.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="api">
+    <div class="section-heading">
+      <p class="eyebrow signal">The API</p>
+      <h2>Workspaces, shells, processes and files.</h2>
+      <p>The reference, with every error code, is <a href="https://github.com/tochi-mba/Environments-api/blob/main/docs/api.md">docs/api.md</a>.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card"><span class="meta">/v1/environments</span><h3>Environments</h3><p>Create, list, inspect, reset and delete isolated workspaces, with usage against their limits.</p></div>
+      <div class="feature-card"><span class="meta">POST /v1/exec</span><h3>Run a command</h3><p>One call that runs a command and waits up to <code>wait_ms</code> for it.</p></div>
+      <div class="feature-card"><span class="meta">shells</span><h3>Persistent shells</h3><p>Open several per environment, write to them, read their output, and wait on a command.</p></div>
+      <div class="feature-card"><span class="meta">processes</span><h3>What is running</h3><p>Live PIDs with state, memory and CPU; signals are checked for ownership.</p></div>
+      <div class="feature-card"><span class="meta">files</span><h3>The files API</h3><p>List, read, search, write, exact edit, patch, mkdir, delete, copy and move, with <code>ETag</code> and <code>If-Match</code>.</p></div>
+      <div class="feature-card"><span class="meta">GET /ready</span><h3>Readiness</h3><p>The active sandbox tier, and whether tokens verify; 503 until keyring's keys can be fetched.</p></div>
+    </div>
+  </section>
+
+  <section class="section container" id="install">
+    <div class="section-heading">
+      <p class="eyebrow signal">Run it</p>
+      <h2>Four commands.</h2>
+      <p>You need Python 3.12 or newer and <a href="https://docs.astral.sh/uv/">uv</a>. <code>make run</code> listens on every interface; bind it to <code>127.0.0.1</code> on a shared network.</p>
+    </div>
+    <ol class="install-steps">
+      <li>Install.
+        <div class="command-row"><code>make install</code><button class="copy-button" type="button" data-copy="make install">Copy</button></div>
+      </li>
+      <li>Point it at keyring.
+        <div class="command-row"><code>cp .env.example .env</code><button class="copy-button" type="button" data-copy="cp .env.example .env">Copy</button></div>
+      </li>
+      <li>Serve it on :8008.
+        <div class="command-row"><code>make run</code><button class="copy-button" type="button" data-copy="make run">Copy</button></div>
+      </li>
+      <li>Ask which sandbox tier is active.
+        <div class="command-row"><code>curl localhost:8008/ready</code><button class="copy-button" type="button" data-copy="curl localhost:8008/ready">Copy</button></div>
+      </li>
+    </ol>
+    <p class="install-note">Without a keyring to hand, <code>uv run python scripts/dev_keyring.py</code> serves a stand-in that mints tokens, and <code>make smoke</code> drives the whole API against it.</p>
+    <p id="copy-status" class="sr-only" aria-live="polite"></p>
+  </section>
+
+  <section class="section container" id="limits">
+    <div class="section-heading">
+      <p class="eyebrow signal">Read before deploying</p>
+      <h2>Read this before deploying it.</h2>
+    </div>
+    <div class="faq">
+      <details open>
+        <summary>What is this, in security terms?</summary>
+        <p>Remote code execution as a product. The sandbox tiers, path containment and PID-ownership checks are the feature. Read the security guide before deploying it.</p>
+      </details>
+      <details>
+        <summary>How strong is the sandbox?</summary>
+        <p>As strong as the host allows, found by real probes rather than trusted configuration: <code>directory</code>, then <code>user</code>, then <code>namespace</code>. The active tier is reported on <code>/ready</code>, and <code>ENVAPI_MIN_SANDBOX_TIER</code> refuses to start below the one you require.</p>
+      </details>
+      <details>
+        <summary>Can a command reach the network?</summary>
+        <p>Only where the deployment allows it. With <code>ENVAPI_ALLOW_NETWORK=false</code>, asking for the network is refused.</p>
+      </details>
+      <details>
+        <summary>What happens to credentials a command needs?</summary>
+        <p>Keyring credentials are injected per command and redacted from its output.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="section container" id="docs">
+    <div class="section-heading">
+      <p class="eyebrow signal">Docs</p>
+      <h2>Written for the person who has to run it.</h2>
+    </div>
+    <div class="feature-grid">
+      <a class="feature-card link" href="https://github.com/tochi-mba/Environments-api/blob/main/docs/security.md"><h3>Security</h3><p>The threat model, and what each control is for.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Environments-api/blob/main/docs/sandbox.md"><h3>Sandbox tiers</h3><p>How each tier is detected and what it isolates.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Environments-api/blob/main/docs/api.md"><h3>The HTTP contract</h3><p>Every route and error code.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Environments-api/blob/main/docs/operations.md"><h3>Operations</h3><p>Every setting, quota and the reaper.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Environments-api/blob/main/docs/architecture.md"><h3>Architecture</h3><p>The layout, and why it is shaped that way.</p></a>
+      <a class="feature-card link" href="https://github.com/tochi-mba/Environments-api/blob/main/docs/mcp.md"><h3>Assistant tools</h3><p>The operations as an assistant would be offered them.</p></a>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-wrap">
+    <span>© <span id="year">2026</span> REX Technologies · Environments-api</span>
+    <span>Part of the <a href="https://tochi-mba.github.io/LUCY-assistant/">LUCY family</a>. MIT licensed.</span>
+    <span class="footer-links">
+      <a href="https://github.com/tochi-mba/Environments-api/blob/main/CHANGELOG.md">What's new <span aria-hidden="true">↗</span></a>
+      <a href="#top">Back to top <span aria-hidden="true">↑</span></a>
+    </span>
+  </div>
+</footer>
+<script src="app.js" defer></script>
+</body>
+</html>
