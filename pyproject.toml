@@ -31,7 +31,7 @@ dev = [
 # Published as tagged git sources. A new client release is a new tag and a version bump here.
 [tool.uv.sources]
 keyring-client = { git = "https://github.com/tochi-mba/Keyring-api", subdirectory = "clients/python", tag = "keyring-client-v0.1.0" }
-settings-client = { git = "https://github.com/tochi-mba/Settings-api", subdirectory = "clients/python", tag = "settings-client-v0.4.0" }
+settings-client = { git = "https://github.com/tochi-mba/Settings-api", subdirectory = "clients/python", tag = "settings-client-v0.4.1" }
 
 [build-system]
 requires = ["hatchling"]
