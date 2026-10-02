@@ -13,7 +13,7 @@ make check   # ruff format --check, ruff check, mypy --strict, lint-imports, pyt
 
 | Area | File | Proven |
 |---|---|---|
-| Framing | `test_shell_units.py`, `test_shell.py` | Exit codes for success, failure and signals; the frame byte in output; a spoofed frame with the wrong nonce; partial frames across reads |
+| Framing | `test_shell_units.py`, `test_shell.py` | Exit codes for success, failure and signals; the frame byte in output; a spoofed frame with the wrong nonce; partial frames across reads; under `sh` and posix-mode `bash`, credentials scoped to their command and a syntax error survived |
 | Lifecycle | `test_shell.py` | Open → exec → poll → wait → close, state after each; `cd` and variables persisting |
 | Kill | `test_shell.py` | SIGTERM then SIGKILL; the whole group dies, grandchildren included; `trap '' TERM` escalates |
 | Timeouts | `test_shell.py` | Children killed; a builtin loop escalates to the shell |
@@ -29,7 +29,7 @@ make check   # ruff format --check, ruff check, mypy --strict, lint-imports, pyt
 | Redaction | `test_shell.py`, `test_api.py` | `echo $TOKEN` never reaches the buffer or the log; split across chunks |
 | Keyring | `test_keyring.py`, `test_api.py` | Issuer, audience, expiry by the injected clock, forged, HS256 and unsigned tokens, no kid, an unknown kid after a good fetch (401, and no flood of fetches), keys served stale through an outage, unreachable keys (503, fixed text), every refusal the same body; `Authorization: Bearer`, the legacy header and a mismatch; keyring's credential answers as variables and as errors |
 | Settings | `test_settings.py` | Unknown `ENVAPI_` variables named without their values; the service token in no repr, dump or error; `.env.example` loads; settings-api is off unless both URL and token are set |
-| Preferences | `test_preferences.py` | Per-person idle TTLs and the per-profile cap clamped to the deployment; `default_profile` refused during an outage unless the request named a profile; idle TTLs stamped on the record at create; 503 with fixed text when settings-api rejects this service |
+| Preferences | `test_preferences.py`, `test_api_shell_choice.py` | Per-person idle TTLs and the per-profile cap clamped to the deployment; `default_profile` refused during an outage unless the request named a profile; idle TTLs stamped on the record at create; 503 with fixed text when settings-api rejects this service; `default_shell` starting `ENVAPI_SH_BINARY` or `ENVAPI_SHELL_BINARY` and never a stored path, through both ways of opening a shell, with a shell this host lacks falling back |
 | Isolation | `test_service.py`, `test_api.py` | Account A cannot see, poll, signal or delete account B's environment, through every route |
 | Concurrency | `test_shell.py`, `test_api.py` | Second exec on a busy shell → 409; parallel shells do not interfere |
 | Restart | `test_service.py`, `test_api.py` | Shells return dead with a reason, environments intact, commands retrievable from logs |

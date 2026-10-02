@@ -52,9 +52,9 @@ deployment has `ENVAPI_ALLOW_NETWORK=false`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/v1/environments/{id}/shells` | Open. `{cwd, env, pty}` |
+| POST | `/v1/environments/{id}/shells` | Open. `{cwd, env, pty}`. With settings-api configured the shell is the caller's `environments.default_shell` (`sh` starts `ENVAPI_SH_BINARY`), otherwise `ENVAPI_SHELL_BINARY`; `shell_binary` in the response says which started |
 | GET | `/v1/environments/{id}/shells` | List (shells known to this process, live or not) |
-| GET | `/v1/shells/{sid}` | State, `pid` (root process), `shell_pid`, `pgid`, current command, cursor |
+| GET | `/v1/shells/{sid}` | State, `pid` (root process), `shell_pid`, `pgid`, `shell_binary`, current command, cursor |
 | DELETE | `/v1/shells/{sid}` | Close: SIGTERM the group, SIGKILL after the grace period |
 | POST | `/v1/shells/{sid}/exec` | Run. `{command, timeout_ms, wait_ms}`; `timeout_ms` has no default (no deadline) and is at most 24 hours, `wait_ms` at most 10 minutes |
 | GET | `/v1/shells/{sid}/output` | Poll. `?cursor=&max_bytes=&wait_ms=`; `max_bytes` defaults to 64 KiB and is capped at `ENVAPI_MAX_FILE_READ_BYTES`, `wait_ms` at most 60000 |
@@ -162,7 +162,8 @@ its full length in `original_chars`.
 
 `POST /v1/exec` `{environment_id, command, timeout_ms, cwd, env, pty, max_output_bytes,
 output_window}` (`timeout_ms` defaults to 60000 and is at most 10 minutes;
-`max_output_bytes` defaults to 256 KiB and is at most 8 MiB) opens an ephemeral shell, runs
+`max_output_bytes` defaults to 256 KiB and is at most 8 MiB) opens an ephemeral shell (the
+caller's `default_shell`, as above), runs
 the command in a subshell, waits, returns output and exit code, and closes the shell
 whatever happened. The single most useful shape for an MCP tool. The response also carries
 `shell_state`, `credentials_injected` and `credentials_missing` (the declared services

@@ -51,8 +51,9 @@ curl -s -XPOST localhost:8008/v1/exec -H "Authorization: Bearer $TOKEN" \
 * Multiple environments per account and profile, bounded by quotas (409 names the limit).
 * Each environment is a folder under `ROOT/accounts/<account>/<profile>/`; environments
   survive restarts, shells do not, and the API says so (`dead_reason: service_restarted`).
-* Concurrent persistent shells per environment; commands are framed with a random nonce
-  so exit codes can be trusted; `exec` with `wait_ms` returns fast results in one call.
+* Concurrent persistent shells per environment, `bash` or, by the owner's choice in
+  settings-api, `sh`; commands are framed with a random nonce so exit codes can be
+  trusted; `exec` with `wait_ms` returns fast results in one call.
 * Live PIDs with state, memory and CPU; signalling verifies the target belongs to the
   environment by ancestry.
 * A files API (list, read, search, write, exact edit, patch, mkdir, delete, copy, move) with
@@ -109,6 +110,7 @@ starting, so a typo cannot leave a default silently in place. The ones that matt
 | `ENVAPI_KEYRING_ISSUER` | The `iss` of accepted tokens: exactly keyring's `KEYRING_ISSUER`. |
 | `ENVAPI_MIN_SANDBOX_TIER` | `directory`, `user` or `namespace`; refuse to start below it. |
 | `ENVAPI_ALLOW_NETWORK` | Default egress; only enforced at the namespace tier. |
+| `ENVAPI_SHELL_BINARY`, `ENVAPI_SH_BINARY` | The shell every session starts, and the one a person who chose `sh` in settings-api (`environments.default_shell`) gets instead. A blank `ENVAPI_SH_BINARY` turns that choice off. |
 | `ENVAPI_OPERATOR_ACCOUNTS` | Comma-separated account ids allowed to use `/v1/admin`. |
 | `ENVAPI_API_KEYS` | Optional front-door keys for `X-API-Key`. |
 | `ENVAPI_MAX_*`, `*_IDLE_TTL_SECONDS` | Quotas; per-account overrides via `/v1/admin/quotas`, except `ENVAPI_MAX_FILE_READ_BYTES` and `ENVAPI_MAX_FILE_WRITE_BYTES`, which are deployment-wide. Person-lowerable idle TTLs and the per-profile cap are also in settings-api (`environments`); unset `ENVAPI_SETTINGS_API_BASE_URL` keeps today's behaviour. |

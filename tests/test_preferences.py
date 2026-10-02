@@ -39,6 +39,8 @@ FALLBACKS = {
     "idle_shell_minutes": Fallback(default=60, on_unavailable=OnUnavailable.USE_DEFAULT),
     "max_environments_per_profile": Fallback(default=5, on_unavailable=OnUnavailable.USE_DEFAULT),
     "default_profile": Fallback(default="personal", on_unavailable=OnUnavailable.REFUSE),
+    "default_shell": Fallback(default="bash", on_unavailable=OnUnavailable.USE_DEFAULT),
+    "persist_history": Fallback(default=False, on_unavailable=OnUnavailable.USE_DEFAULT),
 }
 
 
@@ -287,6 +289,72 @@ class TestValuesThatCannotBeUsed:
         preferences = await reading(client, default_profile="work").for_token(USER_TOKEN)
 
         assert preferences.default_profile == "work"
+
+
+class TestTheShellAPersonChose:
+    async def test_sh_is_the_shell_this_deployment_configured_for_it(self) -> None:
+        """The bug, named: ``default_shell`` was stored and never read, so ``sh`` did nothing."""
+        client = FakeSettingsClient()
+        client.seed("environments", {"default_shell": "sh"})
+
+        preferences = await reading(client, sh_binary="/usr/bin/dash").for_token(USER_TOKEN)
+
+        assert preferences.shell_binary == "/usr/bin/dash"
+
+    async def test_bash_is_the_deployments_own_shell_whatever_that_names(self) -> None:
+        """The bug avoided, named: the catalogue's default moving everybody off their shell.
+
+        settings-api answers ``bash`` for everybody who chose nothing, so ``bash`` has to
+        mean ``ENVAPI_SHELL_BINARY`` exactly, even on a deployment that configured another.
+        """
+        client = FakeSettingsClient()
+        client.seed("environments", {"default_shell": "bash"})
+
+        preferences = await reading(client, shell_binary="/usr/bin/zsh").for_token(USER_TOKEN)
+
+        assert preferences.shell_binary is None
+
+    async def test_a_deployment_that_turned_sh_off_starts_its_own_shell(self) -> None:
+        client = FakeSettingsClient()
+        client.seed("environments", {"default_shell": "sh"})
+
+        preferences = await reading(client, sh_binary="").for_token(USER_TOKEN)
+
+        assert preferences.shell_binary is None
+
+    @pytest.mark.parametrize("value", ["zsh", "/bin/zsh", 1, True])
+    async def test_a_value_outside_the_two_shells_never_names_a_binary(self, value: Any) -> None:
+        """The bug avoided, named: a stored path becoming the binary the sandbox runs."""
+        client = FakeSettingsClient()
+        client.seed("environments", {"default_shell": value})
+
+        with capture_logs() as logs:
+            preferences = await reading(client).for_token(USER_TOKEN)
+
+        assert preferences.shell_binary is None
+        assert any(entry.get("key") == "default_shell" for entry in logs)
+        assert all("zsh" not in str(entry) for entry in logs)
+
+    @pytest.mark.parametrize("fallbacks", [None, {"environments": FALLBACKS}])
+    async def test_an_outage_starts_the_deployments_shell(self, fallbacks: Any) -> None:
+        client = FakeSettingsClient(fallbacks=fallbacks)
+        client.unavailable = True
+
+        preferences = await reading(client).for_token(USER_TOKEN)
+
+        assert preferences.shell_binary is None
+
+    async def test_persist_history_is_not_read(self) -> None:
+        """These shells are not interactive and keep no history, so there is none to keep."""
+        client = FakeSettingsClient()
+        client.seed("environments", {"persist_history": True})
+        settings = settings_with()
+
+        preferences = await SettingsApiPreferences(client=client, settings=settings).for_token(
+            USER_TOKEN
+        )
+
+        assert preferences == deployment_preferences(settings)
 
 
 class TestChoosingAProfile:

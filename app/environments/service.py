@@ -506,10 +506,36 @@ class EnvironmentService:
 
     # ----- shells --------------------------------------------------------------------
 
+    def _shell_binary(self, chosen: str | None) -> str:
+        """The shell to start: the one chosen if this host has it, else the deployment's.
+
+        A chosen shell that is not installed would fail every session it applies to, so it
+        falls back to what the session would have started before anybody could choose, and
+        the shell's view says which ran. The deployment's own shell is never second-guessed:
+        if it is missing, spawning fails as it always has.
+        """
+        deployment = self._settings.shell_binary
+        if chosen is None or chosen == deployment:
+            return deployment
+        if os.path.isfile(chosen) and os.access(chosen, os.X_OK):
+            return chosen
+        log.warning("chosen_shell_not_installed", shell_binary=chosen, fallback=deployment)
+        return deployment
+
     def open_shell(
-        self, caller: Caller, environment_id: str, cwd: str, env: dict[str, str], pty: bool
+        self,
+        caller: Caller,
+        environment_id: str,
+        cwd: str,
+        env: dict[str, str],
+        pty: bool,
+        shell_binary: str | None = None,
     ) -> Shell:
-        """Start a shell in the environment."""
+        """Start a shell in the environment.
+
+        ``shell_binary`` is its owner's choice from :class:`~app.preferences.Preferences`;
+        ``None`` starts the deployment's ``shell_binary``, as every shell did before.
+        """
         for key in env:
             if not ENV_VAR_PATTERN.match(key):
                 raise ValidationError(f"invalid environment variable name {key!r}", name=key)
@@ -541,19 +567,20 @@ class EnvironmentService:
                 "ENVAPI_ENVIRONMENT_ID": record.id,
                 **env,
             }
+            binary = self._shell_binary(shell_binary)
             spec = ShellSpec(
                 shell_id=new_id("sh"),
                 environment_id=record.id,
                 cwd=relative_to_workspace(workspace, cwd_path),
                 pty=pty,
                 logs_dir=self._store.logs(record),
-                shell_binary=self._settings.shell_binary,
+                shell_binary=binary,
                 buffer_bytes=quotas.max_output_buffer_bytes,
                 max_log_bytes=quotas.max_command_log_bytes,
             )
             request = SpawnRequest(
                 environment_id=record.id,
-                argv=[self._settings.shell_binary],
+                argv=[binary],
                 workspace=workspace,
                 cwd=cwd_path,
                 env=spawn_env,

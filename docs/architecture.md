@@ -17,7 +17,7 @@ from that.
 | `app/file_edits.py`, `app/file_search.py` | Exact replacement and unified-patch parsing; bounded literal search. |
 | `app/shells/` | Ring buffer, command framing, secret redaction, and the `Shell` process wrapper. |
 | `app/procfs.py`, `app/processes.py` | `/proc` inspection and the process-ownership guard. |
-| `app/preferences.py` | The one place settings-api is spoken to. Per-person idle TTLs, the per-profile cap, and `common.default_profile`. |
+| `app/preferences.py` | The one place settings-api is spoken to. Per-person idle TTLs, the per-profile cap, `default_shell`, and `common.default_profile`. |
 | `app/environments/` | Durable records, the on-disk store, quotas, the orchestrating service, and the reaper's work. |
 | `app/audit.py` | Append-only JSON-lines log of every privileged action. |
 | `app/constants.py` | Header names, name patterns, on-disk names, the command frame, and the state enums. |
@@ -34,7 +34,7 @@ Account (keyring `sub`)
         ├── workspace/           the only writable place a shell gets
         ├── logs/<cmd>.log|.json full output and metadata per command
         ├── environment.json     the record, written atomically
-        └── Shell (0..n, concurrent)  — a bash process; not durable
+        └── Shell (0..n, concurrent)  — a bash (or, by choice, sh) process; not durable
             └── Command (serial)      — one at a time per shell
 ```
 
@@ -60,7 +60,7 @@ A persistent shell does not say when a command finishes, so the service makes it
 For each command it writes to the shell's stdin:
 
 ```
-[VAR=value ...] eval '<command, single-quoted>'; printf '\036%s:%d\036' <nonce> $?
+[VAR=value ...] command eval '<command, single-quoted>'; printf '\036%s:%d\036' <nonce> $?
 ```
 
 * `eval` of a quoted literal keeps the caller's quoting intact, lets `cd` and variables
@@ -71,6 +71,9 @@ For each command it writes to the shell's stdin:
 * The nonce is random per command. A frame with the wrong nonce is ordinary output, which
   is what makes the reported exit code trustworthy.
 * Temporary assignments before `eval` scope injected credentials to that one command.
+* `command` keeps both of those true in a POSIX shell. `eval` is a special built-in, so
+  without it `sh` (and `bash` under `set -o posix`) would keep the assignments for every
+  later command, and a non-interactive `sh` would exit on a syntax error inside it.
 
 Stdout and stderr are merged at the OS level (one pipe or one pty), which preserves
 ordering. Output flows through the redactor, then into a bounded ring buffer and the

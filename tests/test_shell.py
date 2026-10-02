@@ -40,6 +40,7 @@ def make_shell(
     buffer_bytes: int = 1 << 20,
     sandbox: Sandbox | None = None,
     shell_binary: str = BASH,
+    program: str = BASH,
 ) -> Shell:
     ws = tmp_path / "workspace"
     ws.mkdir(exist_ok=True)
@@ -57,7 +58,7 @@ def make_shell(
     )
     request = SpawnRequest(
         environment_id=spec.environment_id,
-        argv=[BASH],
+        argv=[program],
         workspace=ws,
         cwd=ws,
         env={"PATH": os.environ["PATH"], "HOME": str(ws), "PS1": "", "TERM": "dumb"},
@@ -117,6 +118,35 @@ def test_exit_codes(shell: Shell) -> None:
     code, _out = run(shell, "echo 'unterminated")
     assert code != 0
     assert run(shell, "true")[0] == 0  # the shell is still usable afterwards
+
+
+@pytest.mark.parametrize(
+    ("program", "prelude"), [("/bin/sh", "true"), (BASH, "set -o posix")], ids=["sh", "posix"]
+)
+def test_a_posix_shell_scopes_credentials_and_survives_a_syntax_error(
+    tmp_path: Path, program: str, prelude: str
+) -> None:
+    """The bug, named: under ``sh`` a credential outlived its command, and a typo killed the shell.
+
+    ``eval`` is a special built-in, so a POSIX shell keeps the assignments written in front
+    of it, and a non-interactive one exits on a syntax error inside it. ``bash`` does neither
+    until ``set -o posix``. A person choosing ``sh`` would have handed one command's token,
+    unredacted, to every command after it.
+    """
+    shell = make_shell(tmp_path, shell_binary=program, program=program)
+    try:
+        assert run(shell, prelude)[0] == 0
+        github = ResolvedCredential("github", {"GITHUB_TOKEN": "ghp_supersecretvalue"})
+        code, out = run(shell, "sh -c 'echo ${#GITHUB_TOKEN}'", credentials=[github])
+        assert (code, out) == (0, b"20\n")
+        code, out = run(shell, 'printf "%s" "${GITHUB_TOKEN-unset}"')
+        assert (code, out) == (0, b"unset")
+        code, _out = run(shell, "echo 'unterminated")
+        assert code == 2 and state_of(shell) is ShellState.RUNNING
+        assert run(shell, "cd / && X=kept")[0] == 0
+        assert run(shell, 'echo "$PWD $X"')[1] == b"/ kept\n"
+    finally:
+        shell.close(2)
 
 
 def test_state_persists_between_commands(shell: Shell) -> None:

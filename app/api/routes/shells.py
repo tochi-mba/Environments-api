@@ -8,7 +8,13 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import CallerDep, CredentialsDep, ServiceDep, SettingsDep
+from app.api.deps import (
+    CallerDep,
+    CredentialsDep,
+    PreferenceSourceDep,
+    ServiceDep,
+    SettingsDep,
+)
 from app.api.schemas import ExecRequest, OpenShellRequest, SignalRequest, StdinRequest, WaitRequest
 from app.environments.models import EnvironmentRecord
 from app.errors import ValidationError
@@ -52,11 +58,22 @@ def command_result(
 
 @router.post("/environments/{environment_id}/shells", status_code=201)
 async def open_shell(
-    environment_id: str, body: OpenShellRequest, caller: CallerDep, service: ServiceDep
+    environment_id: str,
+    body: OpenShellRequest,
+    caller: CallerDep,
+    service: ServiceDep,
+    preferences: PreferenceSourceDep,
 ) -> dict[str, Any]:
-    """Open a shell in the environment."""
+    """Open a shell in the environment: the caller's ``default_shell``, or the deployment's."""
+    chosen = await preferences.for_token(caller.user_token)
     shell = await asyncio.to_thread(
-        service.open_shell, caller, environment_id, body.cwd, body.env, body.pty
+        service.open_shell,
+        caller,
+        environment_id,
+        body.cwd,
+        body.env,
+        body.pty,
+        chosen.shell_binary,
     )
     return shell.to_dict()
 
