@@ -97,7 +97,7 @@ class TestWithoutSettingsApi:
 
         await build_preference_source(settings_with(), client=client).for_token(USER_TOKEN)
 
-        assert client.resolves == 1
+        assert client.resolves == 2, "once for the default profile, once in it"
 
 
 class TestAPersonsChoices:

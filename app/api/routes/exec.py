@@ -32,7 +32,7 @@ async def exec_once(
     """
     record = service.get(caller, body.environment_id)
     resolved, missing = await resolve_credentials(record, caller, credentials)
-    chosen = await preferences.for_token(caller.user_token)
+    chosen = await preferences.for_token(caller.user_token, profile=caller.profile)
     shell = await asyncio.to_thread(
         service.open_shell,
         caller,

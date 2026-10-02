@@ -686,12 +686,25 @@ async def test_a_settings_client_is_not_asked_at_startup_and_is_closed(
             self.closed = False
             self.resolves = 0
 
-        async def resolve(self, namespace: str, *, user_token: str) -> Any:
+        async def resolve(
+            self, namespace: str, *, user_token: str, profile: str | None = None
+        ) -> Any:
             self.resolves += 1
             raise AssertionError("must not fetch settings at startup")
 
-        async def set(self, namespace: str, key: str, value: object, *, user_token: str) -> int:
+        async def set(
+            self,
+            namespace: str,
+            key: str,
+            value: object,
+            *,
+            user_token: str,
+            profile: str | None = None,
+        ) -> int:
             raise AssertionError("must not write settings at startup")
+
+        def forget(self, user_token: str, namespace: str | None = None) -> None:
+            raise AssertionError("must not forget settings at startup")
 
         async def aclose(self) -> None:
             self.closed = True

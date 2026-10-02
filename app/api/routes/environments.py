@@ -22,7 +22,7 @@ async def create_environment(
     preferences: PreferenceSourceDep,
 ) -> dict[str, Any]:
     """Create an environment under the caller's account and profile."""
-    chosen = await preferences.for_token(caller.user_token)
+    chosen = await preferences.for_token(caller.user_token, profile=caller.profile)
     record = await asyncio.to_thread(
         service.create,
         caller,
