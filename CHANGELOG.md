@@ -7,6 +7,12 @@ All notable changes to this service are recorded here. The format follows
 
 ### Security
 
+- Scope injected credentials to their command in any POSIX shell. Commands ran
+  through `eval`, a special built-in, so `sh` -- and `bash` after `set -o posix` --
+  kept the variables written in front of it: every later command in that shell could
+  read the token, unredacted once it carried no credentials of its own. Under `sh` a
+  syntax error also ended the shell. Commands now run through `command eval`, which
+  keeps the assignments temporary and the error survivable in both shells.
 - Take a caller's `X-Request-ID` only when it is 1 to 64 characters of `A-Z a-z 0-9 . _ : -`,
   and generate a fresh one otherwise. Any value of any length was echoed on the response
   and bound to every log line the request wrote.
@@ -118,6 +124,15 @@ All notable changes to this service are recorded here. The format follows
   settings from settings-api; idle TTLs are stamped on the record so the reaper can honour
   them without a user token. `common.default_profile` replaces `ENVAPI_DEFAULT_PROFILE`
   when a request names no profile, and is refused rather than guessed during an outage.
+- `environments.default_shell` is read when a shell opens, through
+  `POST /v1/environments/{id}/shells` and `POST /v1/exec`. A person who chose `sh` gets
+  `ENVAPI_SH_BINARY` (new, default `/bin/sh`; blank turns the choice off). `bash`, the
+  catalogue's default, means `ENVAPI_SHELL_BINARY` whatever that names, so nobody who
+  chose nothing sees a change, and neither does anybody without settings-api. A chosen
+  shell this host does not have falls back to `ENVAPI_SHELL_BINARY` and is logged as
+  `chosen_shell_not_installed`. Shell views carry `shell_binary`, the binary that
+  started. `environments.persist_history` is not read: these shells are not
+  interactive and keep no history to persist.
 - `output_window` on `POST /v1/exec`: `head` (the default, and the old behaviour) or `tail`,
   which returns the last `max_output_bytes` of the output instead of the first.
 - `output_truncated_bytes` on command results from `POST /v1/exec` and

@@ -66,7 +66,8 @@ class Settings(BaseSettings):
 
     Set, each create reads its owner's ``environments`` settings: idle lifetimes stamped
     on the record, the per-profile cap, and which profile they mean when they name none.
-    The ceilings in this configuration still apply on top of what anybody chooses.
+    Each new shell reads which of the two shells below its owner wants. The ceilings in
+    this configuration still apply on top of what anybody chooses.
     """
     settings_api_token: SecretStr | None = None
     """This service's entry in settings-api's ``SETTINGS_API_SERVICES``.
@@ -83,6 +84,18 @@ class Settings(BaseSettings):
     min_sandbox_tier: str = "directory"
     allow_network: bool = True
     shell_binary: str = "/bin/bash"
+    """The shell every session starts, unless its owner chose ``sh`` in settings-api.
+
+    It is also what ``environments.default_shell: bash``, the catalogue's default, means:
+    exactly what everybody got before anybody could choose.
+    """
+    sh_binary: str | None = "/bin/sh"
+    """The shell a person who chose ``environments.default_shell: sh`` gets.
+
+    A person names one of two shells, never a path: which binaries run inside the sandbox
+    stays this deployment's decision. Blank turns the choice off, and everybody gets
+    ``shell_binary``.
+    """
     operator_accounts: Annotated[list[str], NoDecode] = Field(default_factory=list)
     api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
     log_json: bool = True
@@ -127,10 +140,10 @@ class Settings(BaseSettings):
     def _audience(cls, value: str) -> str:
         return ExactAudience(value).name
 
-    @field_validator("settings_api_base_url")
+    @field_validator("settings_api_base_url", "sh_binary")
     @classmethod
-    def _blank_settings_url_is_unset(cls, value: str | None) -> str | None:
-        """``ENVAPI_SETTINGS_API_BASE_URL=`` in a ``.env`` means off, not an empty URL."""
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        """``ENVAPI_SETTINGS_API_BASE_URL=`` or ``ENVAPI_SH_BINARY=`` means off, not ``""``."""
         return value or None
 
     @field_validator("settings_api_token", mode="before")

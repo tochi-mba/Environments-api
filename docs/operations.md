@@ -52,7 +52,9 @@ Both or neither: half a configuration is a startup error. With them set, creatin
 environment reads that person's `environments` namespace — idle lifetimes and the
 per-profile cap — clamped to the ceilings below. A person can lower those three for
 themselves and never raise them; every ceiling, and every other quota, stays the
-operator's.
+operator's. Opening a shell reads `default_shell`: `sh` starts `ENVAPI_SH_BINARY`, and
+`bash`, the default, starts `ENVAPI_SHELL_BINARY`. A person picks one of those two
+names, never a path.
 
 ### Sandbox and shells
 
@@ -61,7 +63,8 @@ operator's.
 | `ENVAPI_ROOT` | `./data` | Where environments live. |
 | `ENVAPI_MIN_SANDBOX_TIER` | `directory` | The weakest tier this deployment accepts. |
 | `ENVAPI_ALLOW_NETWORK` | `true` | Whether sandboxed commands may reach the network. Enforced only at the namespace tier; below it, `false` is recorded but not enforced. |
-| `ENVAPI_SHELL_BINARY` | `/bin/bash` | The shell started in an environment. |
+| `ENVAPI_SHELL_BINARY` | `/bin/bash` | The shell started in an environment, and what `environments.default_shell: bash` means. |
+| `ENVAPI_SH_BINARY` | `/bin/sh` | What a person who chose `environments.default_shell: sh` gets. Blank turns the choice off. A chosen shell this host does not have falls back to `ENVAPI_SHELL_BINARY` and logs `chosen_shell_not_installed`. |
 | `ENVAPI_SHELL_IDLE_TTL_SECONDS` | `3600` | How long an idle shell is kept. |
 | `ENVAPI_ENVIRONMENT_IDLE_TTL_SECONDS` | `86400` | How long an idle environment is kept. |
 | `ENVAPI_REAPER_INTERVAL_SECONDS` | `60` | How often idleness is checked. |

@@ -26,12 +26,17 @@ def exec_script(command: str, nonce: str, env: dict[str, str] | None = None) -> 
     and variable assignments persist, and turns an unterminated quote into a syntax error
     with a frame rather than a shell that hangs waiting for the closing quote.
     Temporary assignments before ``eval`` scope injected credentials to that one command.
+
+    ``command`` is what makes both of those hold in a POSIX shell. ``eval`` is a special
+    built-in, so ``sh`` (and ``bash`` after ``set -o posix``) keeps assignments made in
+    front of it, and a non-interactive ``sh`` exits on an error inside one. ``command``
+    takes both properties away, and passes over any function a command named ``eval``.
     """
     prefix = ""
     if env:
         prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items()) + " "
     frame = "printf '\\036%s:%d\\036' " + nonce + " $?"
-    return f"{prefix}eval {shlex.quote(command)}; {frame}\n".encode()
+    return f"{prefix}command eval {shlex.quote(command)}; {frame}\n".encode()
 
 
 @dataclass(frozen=True, slots=True)

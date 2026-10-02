@@ -37,7 +37,7 @@ PID-ownership checks are the feature, not polish.
 * An environment declares which services' credentials it wants. They are resolved per
   command with the caller's own token (keyring derives the account from it; there is no
   parameter naming an account), injected as temporary variables scoped to that one
-  command, never written to disk, and redacted from captured output before it reaches the
+  command in `bash` and `sh` alike, never written to disk, and redacted from captured output before it reaches the
   ring buffer or the log (`«redacted:<service>»`). Redaction works across read boundaries.
 * `resolve_form_secrets` is deliberately not used.
 

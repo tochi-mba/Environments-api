@@ -162,6 +162,11 @@ def test_a_blank_settings_api_url_means_off() -> None:
     assert make(settings_api_base_url="").settings_api_base_url is None
 
 
+def test_sh_is_the_shell_a_person_may_choose_unless_it_is_blanked() -> None:
+    assert make().sh_binary == "/bin/sh"
+    assert make(sh_binary="").sh_binary is None
+
+
 def test_an_empty_settings_api_token_object_means_off() -> None:
     from pydantic import SecretStr
 

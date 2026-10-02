@@ -95,10 +95,10 @@ def test_exec_script_shapes() -> None:
     nonce = new_nonce()
     assert len(nonce) == 32
     script = exec_script("echo 'hi'", nonce)
-    assert script.startswith(b"eval 'echo '\"'\"'hi'\"'\"''; printf")
+    assert script.startswith(b"command eval 'echo '\"'\"'hi'\"'\"''; printf")
     assert nonce.encode() in script and script.endswith(b" $?\n")
     with_env = exec_script("x", nonce, {"GITHUB_TOKEN": "a b"})
-    assert with_env.startswith(b"GITHUB_TOKEN='a b' eval")
+    assert with_env.startswith(b"GITHUB_TOKEN='a b' command eval")
 
 
 def test_frame_parser_across_boundaries() -> None:

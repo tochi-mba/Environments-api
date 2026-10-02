@@ -4,8 +4,10 @@ import os
 import signal
 import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from app import procfs
 from app.audit import AuditLog
@@ -398,6 +400,45 @@ def test_create_with_settings_api_stamps_ttls_and_honours_the_lower_cap(
         assert other.environment_idle_ttl_seconds == 120
     finally:
         service.shutdown()
+
+
+def test_a_shell_starts_the_binary_its_owner_chose(
+    service: EnvironmentService, settings: Settings
+) -> None:
+    """The bug, named: every shell started ``ENVAPI_SHELL_BINARY``, whatever its owner chose."""
+    record = service.create(ALICE, "posix", {}, [], None, None)
+    chosen = service.open_shell(ALICE, record.id, ".", {}, False, "/bin/sh")
+    default = service.open_shell(ALICE, record.id, ".", {}, False)
+    assert procfs.read_cmdline(chosen.shell_pid) == "/bin/sh"
+    assert procfs.read_cmdline(default.shell_pid) == settings.shell_binary
+    assert chosen.to_dict()["shell_binary"] == "/bin/sh"
+    assert default.to_dict()["shell_binary"] == settings.shell_binary
+    command = service.exec(ALICE, chosen.id, "echo framed", None, [])
+    assert chosen.wait_command(command, 10) and command.exit_code == 0
+
+
+def test_a_chosen_shell_this_host_lacks_falls_back_to_the_deployments(
+    service: EnvironmentService, settings: Settings, tmp_path: Path
+) -> None:
+    """The bug, named: a chosen shell that is not installed would fail every session it reached.
+
+    It falls back to the shell the session would have started anyway, says which ran, and
+    logs the binary it could not use. Only a chosen shell is checked: the deployment's own
+    is started as it always was.
+    """
+    record = service.create(ALICE, "fallback", {}, [], None, None)
+    missing = str(tmp_path / "no-such-shell")
+    not_executable = tmp_path / "not-executable"
+    not_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    with capture_logs() as logs:
+        shells = [
+            service.open_shell(ALICE, record.id, ".", {}, False, path)
+            for path in (missing, str(not_executable))
+        ]
+    assert [s.to_dict()["shell_binary"] for s in shells] == [settings.shell_binary] * 2
+    assert [
+        entry["shell_binary"] for entry in logs if entry["event"] == "chosen_shell_not_installed"
+    ] == [missing, str(not_executable)]
 
 
 def test_restart_reconciles_orphans(settings: Settings, clock: Clock) -> None:

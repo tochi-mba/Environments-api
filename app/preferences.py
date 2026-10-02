@@ -3,18 +3,20 @@
 The deployment's configuration says how environments-api behaves for everybody.
 settings-api holds what each person has chosen within that, and this module is the one
 place the two meet: it turns a caller's token into the idle lifetimes stamped on an
-environment at create, the per-profile cap a create is held to, and the profile a request
-is resolved with when it names none. Nothing is read at startup, and with no settings-api
-configured every person gets the configuration as it stands -- exactly what
-environments-api did before it read anybody's settings at all.
+environment at create, the per-profile cap a create is held to, the profile a request is
+resolved with when it names none, and the shell a new session starts. Nothing is read at
+startup, and with no settings-api configured every person gets the configuration as it
+stands -- exactly what environments-api did before it read anybody's settings at all.
 
 Three rules shape it.
 
 **A person may narrow a ceiling and never raise it.** Idle lifetimes and the per-profile
 cap are clamped to the catalogue bounds and to this deployment's ``ENVAPI_`` values. A
 person cannot raise ``max_environments_per_account`` or any sandbox exposure quota;
-those stay with the operator. ``default_shell`` is in the catalogue and unread here:
-there is still one deployment-wide ``ENVAPI_SHELL_BINARY``.
+those stay with the operator. ``default_shell`` picks between the two shells the
+operator configured, ``ENVAPI_SHELL_BINARY`` and ``ENVAPI_SH_BINARY``, and never names a
+path. ``persist_history`` is in the catalogue and unread here: these shells are not
+interactive and keep no history to persist.
 
 **Resolve at create, not at reap.** The reaper has no user token. Idle TTLs are stamped
 on the environment record when it is created, and the reaper reads the record. A later
@@ -88,6 +90,14 @@ class Preferences:
     """The profile a request uses when it names none.
 
     ``None`` when settings-api could not be asked and the answer must not be guessed.
+    """
+
+    shell_binary: str | None = None
+    """The shell a new session starts, or ``None`` for the deployment's ``shell_binary``.
+
+    ``None`` is what somebody gets who chose ``bash``, chose nothing, or could not be
+    asked. Whether a binary is installed is the host's question, settled when a shell
+    opens.
     """
 
     def profile(self, requested: str | None) -> str:
@@ -225,6 +235,7 @@ class SettingsApiPreferences:
                 maximum=MAX_ENVIRONMENTS_PER_PROFILE_MAX,
             ),
             default_profile=self._default_profile(resolved),
+            shell_binary=self._shell_binary(resolved),
         )
 
     def _default_profile(self, resolved: ResolvedSettings) -> str | None:
@@ -240,6 +251,20 @@ class SettingsApiPreferences:
         if value is not None:
             log.warning("setting_unusable", namespace="common", key="default_profile")
         return self._settings.default_profile
+
+    def _shell_binary(self, resolved: ResolvedSettings) -> str | None:
+        """``default_shell``: ``sh`` is this deployment's ``sh_binary``; anything else is its own.
+
+        ``bash`` is the catalogue's default and what everybody started before anybody could
+        choose, so it means ``shell_binary`` whatever that names. A deployment that left
+        ``sh_binary`` blank has turned the choice off, and ``sh`` means the same.
+        """
+        value = resolved.get("default_shell", None)
+        if value == "sh":
+            return self._settings.sh_binary
+        if value is not None and value != "bash":
+            log.warning("setting_unusable", namespace=NAMESPACE, key="default_shell")
+        return None
 
 
 def build_preference_source(

@@ -594,6 +594,7 @@ class Shell:
                 "pgid": self.pgid,
                 "start_ticks": self.start_ticks,
                 "pty": self.spec.pty,
+                "shell_binary": self.spec.shell_binary,
                 "cwd": self.spec.cwd,
                 "created_at": self.created_at,
                 "last_activity_at": self.last_activity,

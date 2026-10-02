@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from app.api.deps import CallerDep, CredentialsDep, ServiceDep
+from app.api.deps import CallerDep, CredentialsDep, PreferenceSourceDep, ServiceDep
 from app.api.routes.shells import command_result, resolve_credentials
 from app.api.schemas import ExecOnceRequest
 
@@ -16,19 +16,31 @@ router = APIRouter(prefix="/v1", tags=["exec"])
 
 @router.post("/exec")
 async def exec_once(
-    body: ExecOnceRequest, caller: CallerDep, service: ServiceDep, credentials: CredentialsDep
+    body: ExecOnceRequest,
+    caller: CallerDep,
+    service: ServiceDep,
+    credentials: CredentialsDep,
+    preferences: PreferenceSourceDep,
 ) -> dict[str, Any]:
     """Run one command in a fresh shell and close it afterwards, whatever happened.
 
-    At most ``max_output_bytes`` of output come back: the first, or with
+    The shell is the caller's ``default_shell``, as ``POST .../shells`` would open it. At
+    most ``max_output_bytes`` of output come back: the first, or with
     ``output_window: "tail"`` the last. ``output_truncated_bytes`` counts what that cap left
     out and ``output_dropped_bytes`` what the ring buffer had already let go, so between them
     they account for every byte of the command's output that the read did not return.
     """
     record = service.get(caller, body.environment_id)
     resolved, missing = await resolve_credentials(record, caller, credentials)
+    chosen = await preferences.for_token(caller.user_token)
     shell = await asyncio.to_thread(
-        service.open_shell, caller, body.environment_id, body.cwd, body.env, body.pty
+        service.open_shell,
+        caller,
+        body.environment_id,
+        body.cwd,
+        body.env,
+        body.pty,
+        chosen.shell_binary,
     )
     try:
         # A subshell keeps `exit N` from taking the ephemeral shell down with it, so the
