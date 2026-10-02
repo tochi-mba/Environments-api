@@ -7,6 +7,9 @@ All notable changes to this service are recorded here. The format follows
 
 ### Fixed
 
+- **settings-client 0.4.1.** A single-flight lock is dropped by the last caller out. Older
+  clients kept the lock of every resolve that failed (an outage, a refused grant) for good,
+  one per token, and keyring tokens rotate every few minutes.
 - **A person's settings are read for the profile the request runs as.** The idle
   lifetimes, the default shell and the command timeout are profile-scoped, and settings-api
   returns a profile's values only to a request that names the profile. This service named
