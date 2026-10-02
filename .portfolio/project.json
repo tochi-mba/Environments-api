@@ -1,0 +1,19 @@
+{
+  "$schema": "https://tochi-mba.github.io/schema/project.schema.json",
+  "slug": "environments",
+  "name": "environments",
+  "tagline": "Sandboxed environments and shells, as an API. Remote code execution as a product.",
+  "description": "Creates isolated workspaces, runs shells in them, reports what is running and lets an assistant kill or wait on it. Because it executes arbitrary commands for remote callers, the sandbox tiers, path containment and PID-ownership checks are the feature, not polish.",
+  "highlights": [
+    "Sandbox tiers reported by /ready",
+    "Path containment and PID ownership checks",
+    "Authenticates against keyring; per-person settings"
+  ],
+  "stack": ["Python 3.12", "FastAPI", "uv"],
+  "category": "service",
+  "family": "lucy",
+  "role": "environments",
+  "status": "active",
+  "order": 150,
+  "display": true
+}
