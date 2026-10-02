@@ -102,7 +102,7 @@ async def get_caller(
     )
     account_id = await verifier.verify(token)
     requested = request.headers.get(HEADER_PROFILE, "").strip() or None
-    chosen = await preferences.for_token(token)
+    chosen = await preferences.for_token(token, profile=requested)
     profile = chosen.profile(requested)
     if not PROFILE_PATTERN.match(profile):
         raise ValidationError(f"invalid profile name {profile!r}", header=HEADER_PROFILE)

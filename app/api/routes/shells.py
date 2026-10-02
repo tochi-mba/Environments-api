@@ -65,7 +65,7 @@ async def open_shell(
     preferences: PreferenceSourceDep,
 ) -> dict[str, Any]:
     """Open a shell in the environment: the caller's ``default_shell``, or the deployment's."""
-    chosen = await preferences.for_token(caller.user_token)
+    chosen = await preferences.for_token(caller.user_token, profile=caller.profile)
     shell = await asyncio.to_thread(
         service.open_shell,
         caller,
