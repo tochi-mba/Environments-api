@@ -265,7 +265,15 @@ class EnvironmentService:
             idle_environment = preferences.environment_idle_ttl_seconds
             idle_shell = preferences.shell_idle_ttl_seconds
         with self._lock:
-            mine = [r for r in self._records.values() if r.account_id == caller.account_id]
+            # Only an active environment holds a place. The reaper archives an idle one by
+            # wiping its workspace and closing its shells, so it holds nothing; counted, a
+            # few weeks of conversations filled the account's cap with empty records and
+            # every new one was refused a workspace.
+            mine = [
+                r
+                for r in self._records.values()
+                if r.account_id == caller.account_id and r.state is EnvironmentState.ACTIVE
+            ]
             in_profile = [r for r in mine if r.profile == caller.profile]
             if len(in_profile) >= profile_cap:
                 raise QuotaExceededError(

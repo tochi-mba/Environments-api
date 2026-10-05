@@ -7,6 +7,12 @@ All notable changes to this service are recorded here. The format follows
 
 ### Fixed
 
+- **An archived environment holds no place under the caps.** The reaper archives an idle
+  environment by wiping its workspace and closing its shells, so it holds nothing, but
+  `create` still counted it towards `max_environments_per_profile` and
+  `max_environments_per_account`. A few weeks of conversations filled an account's cap with
+  empty records, and every new conversation was refused a workspace. Only active environments
+  count now; archived ones are kept, and `reset` still revives one.
 - **settings-client 0.4.2.** A 2xx answer the client cannot use -- a proxy's page, an empty
   body, a document from a newer settings-api -- is treated as an outage and degrades as one,
   instead of reaching this service as a 500.

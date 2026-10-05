@@ -633,3 +633,27 @@ def test_a_failed_write_releases_nothing_for_a_deleted_environment(
                 service.delete(ALICE, record.id)
             raise OSError("the write failed")
     assert service._usage == {kept.id: 0}
+
+
+def test_an_archived_environment_holds_no_place_under_the_caps(
+    service: EnvironmentService, clock: Clock
+) -> None:
+    """The bug, named: the reaper archives an idle environment -- workspace wiped, shells
+    closed -- and `create` still counted it. A few weeks of conversations filled the account's
+    cap with empty records, and every new conversation was refused a workspace."""
+    first = service.create(ALICE, "one", {}, [], None, None)
+    service.create(ALICE, "two", {}, [], None, None)
+    service.create(ALICE_WORK, "three", {}, [], None, None)
+    with pytest.raises(QuotaExceededError):
+        service.create(ALICE, "full", {}, [], None, None)
+
+    clock.now += 10**6
+    assert service.reap().environments_archived == 3
+
+    again = service.create(ALICE, "four", {}, [], None, None)
+    service.create(ALICE, "five", {}, [], None, None)
+    service.create(Caller("alice", "home", "tok-a"), "six", {}, [], None, None)
+    assert again.state is EnvironmentState.ACTIVE
+    assert service.get(ALICE, first.id).state is EnvironmentState.ARCHIVED, "kept, not deleted"
+    with pytest.raises(QuotaExceededError):
+        service.create(ALICE, "seven", {}, [], None, None)
